@@ -1,0 +1,6 @@
+# 运行期数据与备份含家庭真实财务信息，禁止纳入版本库
+*.db
+*.db-wal
+*.db-shm
+backups/
+!.gitkeep

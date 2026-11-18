@@ -1,0 +1,23 @@
+# 本地配置（含绑定 IP / 端口），不入库
+.env
+
+# 运行期数据与备份（含家庭真实财务信息）
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/backups/
+
+# 编译产物
+*.exe
+scripts/bin/
+
+# 运行日志与 pid
+logs/
+scripts/bin/*.pid
+debug.log
+
+# WorkBuddy 本地应用链接（含本机绝对路径）
+*.genie
+
+# 误建的 shell 展开目录（$(pwd) 字面量）
+src/backend/$(pwd)/

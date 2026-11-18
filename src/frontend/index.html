@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>家庭财务管理系统</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">家庭财务<span>定制记账</span></div>
+  <nav id="nav">
+    <button data-tab="dashboard" class="active">总览</button>
+    <button data-tab="record">记一笔</button>
+    <button data-tab="entries">流水</button>
+    <button data-tab="alerts">未分类<span class="badge" id="alert-badge" hidden>0</span></button>
+    <button data-tab="budgets">预算</button>
+    <button data-tab="plans">计划单<span class="badge" id="plan-badge" hidden>0</span></button>
+    <button data-tab="stock">库存</button>
+    <button data-tab="report">统计</button>
+    <button data-tab="settings">基础数据</button>
+  </nav>
+  <label class="period-picker">月份 <input type="month" id="global-period"></label>
+  <a class="mobile-switch" href="./?desktop=0" title="切回手机极简页（只上传账单）">手机版</a>
+</header>
+
+<main>
+
+  <!-- 总览 -->
+  <section class="tab active" id="tab-dashboard">
+    <div class="section-head">
+      <h2>总览</h2>
+      <span class="muted" id="dash-period-label"></span>
+    </div>
+    <div class="kpi-grid" id="kpi-grid"></div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>收入资金使用进度</h3>
+        <div id="fund-progress"></div>
+      </div>
+      <div class="card">
+        <h3>本期支出领域分布</h3>
+        <div id="category-breakdown"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>预算完成情况</h3>
+      <div id="dash-allocations"></div>
+    </div>
+    <div class="card">
+      <h3>最近流水</h3>
+      <div id="recent-entries"></div>
+    </div>
+  </section>
+
+  <!-- 记一笔 -->
+  <section class="tab" id="tab-record">
+    <div class="section-head"><h2>记一笔</h2><span class="muted">上传截图后填写字段，分类留空会进入未分类报警表</span></div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>1 · 上传账单截图（自动识别）</h3>
+        <div id="ocr-status" class="ocr-status">正在检查 OCR 引擎…</div>
+        <div class="dropzone" id="dropzone">
+          <strong>拖拽图片到这里，或点击选择</strong>
+          <span>支持 jpg / png / webp / gif，单张不超过 10 MiB</span>
+          <input type="file" id="screenshot-file" accept="image/*" hidden>
+        </div>
+        <div id="ocr-progress" class="ocr-progress hidden"></div>
+        <div id="upload-preview"></div>
+        <div class="subhead">已上传截图</div>
+        <div id="screenshot-list" class="scroll-list"></div>
+        <div class="subhead">识别不到？粘贴账单文字</div>
+        <textarea id="ocr-text" rows="3" placeholder="例如：鸡蛋 1盒 12.50&#10;合计 ¥65.40&#10;支付成功"></textarea>
+        <button type="button" class="btn" id="parse-text-btn">解析文本并填入</button>
+      </div>
+      <div class="card">
+        <h3>2 · 填写流水</h3>
+        <form id="entry-form" autocomplete="off">
+          <div class="type-switch">
+            <label><input type="radio" name="type" value="expense" checked> 支出</label>
+            <label><input type="radio" name="type" value="income"> 收入</label>
+          </div>
+          <label>金额（元）<input name="amount" type="text" inputmode="decimal" placeholder="0.00" required></label>
+          <label>发生时间<input name="occurred_at" type="datetime-local"></label>
+          <div class="row">
+            <label>成员<select name="member_id"></select></label>
+            <label>分类<select name="category_id"></select></label>
+          </div>
+          <div class="row">
+            <label>关联预算<select name="allocation_id"></select></label>
+            <label>关联截图<select name="screenshot_id"></select></label>
+          </div>
+          <fieldset>
+            <legend>标签（可多选）</legend>
+            <div id="entry-tag-box" class="tag-box"></div>
+          </fieldset>
+          <label>备注<input name="note" type="text" placeholder="例如：周末外卖、猫罐头囤货"></label>
+          <div class="actions">
+            <button type="submit" class="btn primary">保存流水</button>
+            <button type="reset" class="btn">清空表单</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card hidden" id="recognition-card">
+      <h3>识别结果复核 <span class="muted" id="recognition-meta"></span></h3>
+      <div id="recognition-warnings"></div>
+      <div class="grid-2">
+        <div>
+          <div class="subhead">字段已自动填入右侧表单，请核对</div>
+          <div id="recognition-fields"></div>
+          <details>
+            <summary class="link">查看 OCR 原文</summary>
+            <pre id="recognition-raw" class="raw-text"></pre>
+          </details>
+        </div>
+        <div>
+          <div class="subhead">家庭用品明细 · 勾选后随账单自动入库</div>
+          <div id="recognition-items" class="table-wrap"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 流水 -->
+  <section class="tab" id="tab-entries">
+    <div class="section-head"><h2>流水明细</h2><span class="muted" id="entries-summary"></span></div>
+    <div class="card">
+      <form id="filter-form" class="filter-row">
+        <label>类型<select name="type"><option value="">全部</option><option value="expense">支出</option><option value="income">收入</option></select></label>
+        <label>成员<select name="member_id"></select></label>
+        <label>分类<select name="category_id"></select></label>
+        <label>标签<select name="tag_id"></select></label>
+        <label>从<input type="date" name="from"></label>
+        <label>到<input type="date" name="to"></label>
+        <label>备注<input type="text" name="q" placeholder="关键词"></label>
+        <label class="check"><input type="checkbox" name="uncategorized" value="1"> 只看未分类</label>
+        <label class="check"><input type="checkbox" name="include_subtree" value="1" checked> 含子分类</label>
+        <button type="submit" class="btn primary">查询</button>
+        <button type="reset" class="btn">重置</button>
+      </form>
+      <div id="entries-table" class="table-wrap"></div>
+    </div>
+  </section>
+
+  <!-- 未分类报警 -->
+  <section class="tab" id="tab-alerts">
+    <div class="section-head"><h2>未分类报警表</h2><span class="muted" id="alerts-summary"></span></div>
+    <div class="card">
+      <p class="muted">分类为空的流水会出现在这里。归类后立即从表中移除。</p>
+      <div id="alerts-table" class="table-wrap"></div>
+    </div>
+  </section>
+
+  <!-- 预算 -->
+  <section class="tab" id="tab-budgets">
+    <div class="section-head"><h2>小荷包预分配</h2><span class="muted">每月月初 / 月中两批，流水挂到预算上自动计算进度</span></div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>新增预算</h3>
+        <form id="allocation-form" autocomplete="off">
+          <div class="row">
+            <label>月份<input name="period" type="month" required></label>
+            <label>批次<select name="batch"><option value="first">月初</option><option value="mid">月中</option></select></label>
+          </div>
+          <label>名称<input name="name" type="text" placeholder="例如：房租" required></label>
+          <label>金额（元）<input name="budget" type="text" inputmode="decimal" placeholder="4000.00" required></label>
+          <label>建议分类<select name="category_id"></select></label>
+          <label>备注<input name="note" type="text"></label>
+          <div class="actions"><button type="submit" class="btn primary">保存预算</button></div>
+        </form>
+      </div>
+      <div class="card">
+        <h3>预算完成情况</h3>
+        <div id="allocations-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 计划单 -->
+  <section class="tab" id="tab-plans">
+    <div class="section-head"><h2>计划单</h2><span class="muted">预算挂到计划单上；流水关联预算时，整张计划单自动标记完成</span></div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>新增计划单</h3>
+        <form id="plan-form" autocomplete="off">
+          <label>名称<input name="name" type="text" placeholder="例如：双十一采购计划" required></label>
+          <div class="row">
+            <label>月份（可留空）<input name="period" type="month"></label>
+          </div>
+          <fieldset>
+            <legend>关联预算（可多选）</legend>
+            <div id="plan-alloc-box" class="scroll-list"></div>
+          </fieldset>
+          <label>备注<input name="note" type="text"></label>
+          <div class="actions"><button type="submit" class="btn primary">保存计划单</button></div>
+        </form>
+      </div>
+      <div class="card">
+        <h3>计划单列表</h3>
+        <p class="muted">状态为「进行中」的计划单，一旦有流水关联到其中任一预算，即自动转为「已完成」。</p>
+        <div id="plans-list" class="scroll-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 统计 -->
+  <section class="tab" id="tab-report">
+    <div class="section-head"><h2>细分统计</h2><span class="muted">成员 × 分类 × 标签 × 时间段，自由组合</span></div>
+    <div class="card">
+      <form id="report-form" class="filter-row">
+        <label>分组<select name="group_by">
+          <option value="category">按领域（含子分类）</option>
+          <option value="category_detail">按末级分类</option>
+          <option value="member">按成员</option>
+          <option value="tag">按标签</option>
+          <option value="month">按月份</option>
+          <option value="day">按日期</option>
+        </select></label>
+        <label>类型<select name="type"><option value="">全部</option><option value="expense">支出</option><option value="income">收入</option></select></label>
+        <label>成员<select name="member_id"></select></label>
+        <label>分类<select name="category_id"></select></label>
+        <label>标签<select name="tag_id"></select></label>
+        <label>从<input type="date" name="from"></label>
+        <label>到<input type="date" name="to"></label>
+        <button type="submit" class="btn primary">统计</button>
+      </form>
+      <div id="report-result"></div>
+    </div>
+  </section>
+
+  <!-- 基础数据 -->
+  <section class="tab" id="tab-settings">
+    <div class="section-head"><h2>基础数据</h2><span class="muted">成员、分类树与标签可按自家情况调整</span></div>
+    <div class="grid-3">
+      <div class="card">
+        <h3>家庭成员</h3>
+        <div id="settings-members"></div>
+        <form id="member-form" class="inline-form"><input name="name" placeholder="新增成员姓名" required><button class="btn">添加</button></form>
+      </div>
+      <div class="card">
+        <h3>细分分类树</h3>
+        <div id="settings-categories" class="scroll-list"></div>
+        <form id="category-form" class="inline-form">
+          <input name="name" placeholder="新分类名称" required>
+          <select name="parent_id"></select>
+          <select name="kind"><option value="expense">支出</option><option value="income">收入</option><option value="both">通用</option></select>
+          <button class="btn">添加</button>
+        </form>
+      </div>
+      <div class="card">
+        <h3>标签</h3>
+        <div id="settings-tags"></div>
+        <form id="tag-form" class="inline-form"><input name="name" placeholder="新标签" required><button class="btn">添加</button></form>
+      </div>
+    </div>
+  </section>
+
+  <!-- 库存 -->
+  <section class="tab" id="tab-stock">
+    <div class="section-head"><h2>家庭库存</h2><span class="muted" id="stock-summary-label"></span></div>
+    <div id="stock-alerts"></div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>品类汇总</h3>
+        <div id="stock-categories"></div>
+      </div>
+      <div class="card">
+        <h3>手工入库 / 补录</h3>
+        <form id="stock-form" autocomplete="off">
+          <label>物品名称<input name="name" required placeholder="例如：鸡蛋"></label>
+          <div class="row">
+            <label>数量<input name="qty" type="number" step="0.01" value="1"></label>
+            <label>单位<input name="unit" value="件"></label>
+          </div>
+          <div class="row">
+            <label>金额（元）<input name="amount" placeholder="0.00"></label>
+            <label>品类<select name="category_key"></select></label>
+          </div>
+          <label>保质期至（留空按品类默认值）<input name="expiry_date" type="date"></label>
+          <label>备注<input name="note"></label>
+          <div class="actions"><button type="submit" class="btn primary">入库</button></div>
+        </form>
+      </div>
+    </div>
+    <div class="card">
+      <h3>库存明细</h3>
+      <form id="stock-filter" class="filter-row">
+        <label>品类<select name="category_key"></select></label>
+        <label>状态<select name="status"><option value="in_stock">在库</option><option value="">全部</option><option value="used_up">已用完</option><option value="wasted">已损耗</option></select></label>
+        <label>关键词<input name="q" placeholder="物品名称"></label>
+        <label class="check"><input type="checkbox" name="expiring" value="1"> 只看临期 / 过期</label>
+        <button type="submit" class="btn primary">筛选</button>
+        <button type="reset" class="btn">重置</button>
+      </form>
+      <div id="stock-items" class="table-wrap"></div>
+    </div>
+    <div class="card">
+      <h3>出入库记录</h3>
+      <div id="stock-movements" class="table-wrap"></div>
+    </div>
+  </section>
+
+</main>
+
+<div id="toast" class="toast"></div>
+<div id="modal" class="modal hidden"><div class="modal-card" id="modal-body"></div></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
