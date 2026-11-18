@@ -50,6 +50,10 @@ func openDB(path string) (*sql.DB, error) {
 	if err := applyMigrations(d); err != nil {
 		return nil, err
 	}
+	// 库存品类种子：仅当品类表为空时写入内置 6 类，之后完全交给用户维护。
+	if err := seedStockCategories(d); err != nil {
+		return nil, fmt.Errorf("初始化库存品类失败: %w", err)
+	}
 	return d, nil
 }
 
@@ -157,6 +161,17 @@ var schemaStatements = []string{
 		qty REAL NOT NULL,
 		note TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS stock_categories (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		key TEXT NOT NULL UNIQUE,
+		name TEXT NOT NULL,
+		keywords TEXT NOT NULL DEFAULT '',
+		shelf_days INTEGER NOT NULL DEFAULT 365,
+		sort_order INTEGER NOT NULL DEFAULT 0,
+		is_builtin INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_stock_entry ON stock_items(entry_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_stock_category ON stock_items(category_key)`,

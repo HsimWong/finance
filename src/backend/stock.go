@@ -144,7 +144,7 @@ func queryStockItems(v map[string]string) ([]StockItem, error) {
 }
 
 func findStockRuleByKey(key string) (stockRule, bool) {
-	for _, r := range stockRules {
+	for _, r := range loadStockRules() {
 		if r.Key == key {
 			return r, true
 		}

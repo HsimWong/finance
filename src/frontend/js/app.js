@@ -5,6 +5,7 @@ const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
 const state = {
   meta: { members: [], categories: [], tags: [] },
+  stockCategories: [],
   period: currentMonth(),
   tab: 'dashboard',
   allocations: [],
@@ -127,8 +128,8 @@ function fillSelects() {
 }
 
 async function refreshBase() {
-  [state.meta, state.allocations, state.screenshots, state.plans] = await Promise.all([
-    get('api/meta'), get('api/allocations'), get('api/screenshots'), get('api/plans'),
+  [state.meta, state.allocations, state.screenshots, state.plans, state.stockCategories] = await Promise.all([
+    get('api/meta'), get('api/allocations'), get('api/screenshots'), get('api/plans'), get('api/stock-categories'),
   ]);
   fillSelects();
   renderSettings();
@@ -282,6 +283,18 @@ function renderSettings() {
   $('#settings-tags').innerHTML = state.meta.tags.length
     ? state.meta.tags.map((t) => `<span class="tag-mini" style="font-size:13px;padding:4px 10px;margin:0 6px 6px 0">${esc(t.name)}</span>`).join('')
     : '<div class="empty">还没有标签</div>';
+
+  const cats = state.stockCategories || [];
+  const catBox = $('#settings-stock-categories');
+  if (catBox) catBox.innerHTML = cats.length ? cats.map((c) => `<div class="list-item">
+      <span class="grow"><b>${esc(c.name)}</b>
+        ${c.is_builtin ? '<span class="muted">内置</span>' : ''}
+        <span class="muted">${c.shelf_days} 天 · ${c.item_count} 项库存</span>
+        ${c.keywords ? `<br><span class="muted" style="font-size:12px">关键词：${esc(c.keywords)}</span>` : ''}
+      </span>
+      <button class="btn mini" data-editscat="${c.id}">编辑</button>
+      <button class="btn mini danger" data-delscat="${c.id}">删除</button>
+    </div>`).join('') : '<div class="empty">还没有品类</div>';
 }
 
 // ---------- 各页数据 ----------
@@ -698,6 +711,21 @@ function bindEvents() {
     const f = e.currentTarget;
     await guard(async () => { await post('api/tags', { name: formVal(f, 'name') }); f.reset(); toast('标签已添加'); await reloadCurrent(); });
   });
+  $('#stock-category-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.currentTarget;
+    await guard(async () => {
+      await post('api/stock-categories', {
+        name: formVal(f, 'name'),
+        keywords: formVal(f, 'keywords'),
+        shelf_days: Number(formVal(f, 'shelf_days')) || 365,
+      });
+      f.reset();
+      f.elements['shelf_days'].value = 365;
+      toast('库存品类已添加');
+      await reloadCurrent();
+    });
+  });
 
   // OCR 兜底：粘贴文本解析
   $('#parse-text-btn').addEventListener('click', () => {
@@ -736,7 +764,7 @@ function bindEvents() {
 
   // 全局点击委托
   document.addEventListener('click', async (e) => {
-    const t = e.target.closest('[data-edit], [data-del], [data-classify], [data-editalloc], [data-delalloc], [data-useshot], [data-delshot], [data-rename], [data-delmember], [data-delcat], [data-editstock], [data-delstock], [data-consume], [data-waste], [data-dropitem]');
+    const t = e.target.closest('[data-edit], [data-del], [data-classify], [data-editalloc], [data-delalloc], [data-useshot], [data-delshot], [data-rename], [data-delmember], [data-delcat], [data-editscat], [data-delscat], [data-editstock], [data-delstock], [data-consume], [data-waste], [data-dropitem]');
     if (!t) return;
     const d = t.dataset;
     if (d.dropitem !== undefined) {
@@ -769,6 +797,7 @@ function bindEvents() {
       if (!name || !name.trim()) return;
       return guard(async () => { await patch(`api/members/${d.rename}`, { name: name.trim() }); toast('已更新'); await reloadCurrent(); });
     }
+    if (d.editscat) return guard(() => openEditStockCategory(Number(d.editscat)));
     if (d.editstock) return guard(() => openEditStockItem(Number(d.editstock)));
     if (d.consume || d.waste) {
       const isWaste = !!d.waste;
@@ -790,6 +819,7 @@ function bindEvents() {
       ['delshot', `确定删除截图 #${d.delshot}？`, `api/screenshots/${d.delshot}`, '截图已删除'],
       ['delmember', `确定删除该成员？`, `api/members/${d.delmember}`, '成员已删除'],
       ['delcat', `确定删除该分类？`, `api/categories/${d.delcat}`, '分类已删除'],
+      ['delscat', `确定删除该库存品类？若还有库存项使用它，将拒绝删除并提示先改到其他品类。`, `api/stock-categories/${d.delscat}`, '库存品类已删除'],
     ];
     for (const [key, msg, url, okMsg] of actions) {
       if (d[key]) {
@@ -995,6 +1025,37 @@ function renderStockMovements(list) {
       <td>${esc(m.item_name)}</td><td>${kindLabel[m.kind] || m.kind}</td>
       <td>${m.qty}</td><td class="note">${esc(m.note)}</td>
     </tr>`).join('')}</tbody></table>`;
+}
+
+function openEditStockCategory(id) {
+  const c = (state.stockCategories || []).find((x) => x.id === id);
+  if (!c) { toast('品类不存在', true); return; }
+  openModal(`<h3>编辑品类 · ${esc(c.name)}</h3>
+    <form id="edit-stock-category-form">
+      <label>品类名称<input name="name" value="${esc(c.name)}" required></label>
+      <label>识别关键词（逗号分隔，命中即自动归入此品类）<input name="keywords" value="${esc(c.keywords || '')}" placeholder="例如：猫抓板, 猫玩具"></label>
+      <label>默认保质期天数<input name="shelf_days" type="number" min="1" max="3650" value="${c.shelf_days}"></label>
+      ${c.is_builtin ? '<p class="muted">内置品类可修改，改名会同步更新已有库存项的显示名。</p>' : ''}
+      <div class="actions">
+        <button type="submit" class="btn primary">保存</button>
+        <button type="button" class="btn" id="modal-cancel">取消</button>
+      </div>
+    </form>`);
+  $('#modal-cancel').addEventListener('click', closeModal);
+  $('#edit-stock-category-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.currentTarget;
+    await guard(async () => {
+      await put(`api/stock-categories/${id}`, {
+        name: formVal(f, 'name'),
+        keywords: formVal(f, 'keywords'),
+        shelf_days: Number(formVal(f, 'shelf_days')) || 365,
+      });
+      closeModal();
+      toast('品类已更新');
+      await reloadCurrent();
+    });
+  });
 }
 
 async function openEditStockItem(id) {

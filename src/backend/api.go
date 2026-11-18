@@ -62,6 +62,11 @@ func registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/stock/items/{id}/consume", handleConsumeStock)
 	mux.HandleFunc("POST /api/stock/items/{id}/waste", handleWasteStock)
 	mux.HandleFunc("GET /api/stock/movements", handleStockMovements)
+
+	mux.HandleFunc("GET /api/stock-categories", handleListStockCategories)
+	mux.HandleFunc("POST /api/stock-categories", handleCreateStockCategory)
+	mux.HandleFunc("PUT /api/stock-categories/{id}", handleUpdateStockCategory)
+	mux.HandleFunc("DELETE /api/stock-categories/{id}", handleDeleteStockCategory)
 }
 
 // ---------- 基础数据 ----------
@@ -82,8 +87,9 @@ func handleMeta(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "读取标签失败: %v", err)
 		return
 	}
-	rules := make([]map[string]any, 0, len(stockRules))
-	for _, r := range stockRules {
+	dynamicRules := loadStockRules()
+	rules := make([]map[string]any, 0, len(dynamicRules))
+	for _, r := range dynamicRules {
 		rules = append(rules, map[string]any{"key": r.Key, "name": r.Name, "shelf_days": r.ShelfDays})
 	}
 	writeOK(w, map[string]any{

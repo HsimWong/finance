@@ -255,6 +255,17 @@
         <div id="settings-tags"></div>
         <form id="tag-form" class="inline-form"><input name="name" placeholder="新标签" required><button class="btn">添加</button></form>
       </div>
+      <div class="card">
+        <h3>库存品类</h3>
+        <p class="muted">库存与账单识别用的品类。关键词命中时自动归入该品类，保质期天数用于自动算到期日。</p>
+        <div id="settings-stock-categories" class="scroll-list"></div>
+        <form id="stock-category-form" class="inline-form">
+          <input name="name" placeholder="新品类名称" required>
+          <input name="keywords" placeholder="识别关键词，逗号分隔">
+          <input name="shelf_days" type="number" value="365" min="1" max="3650" placeholder="保质期天数" title="默认保质期天数">
+          <button class="btn">添加</button>
+        </form>
+      </div>
     </div>
   </section>
 

@@ -19,7 +19,7 @@ import (
 //  3. 保留下方「变更前强制备份」逻辑 —— 版本落后时先备份再改，备份失败即中止启动。
 //
 // 备份使用 VACUUM INTO，生成包含 WAL 已提交数据的单文件一致性快照。
-const schemaVersion = 4
+const schemaVersion = 5
 
 // migrations[版本号] = 从「版本号-1」升级到「版本号」要执行的语句。
 // v1 只是给既有库打版本号标记（表结构由 schemaStatements 幂等维护），无破坏性语句。
@@ -114,6 +114,12 @@ var migrations = map[int][]string{
 		// schemaStatements 幂等创建（CREATE TABLE IF NOT EXISTS），此处无历史数据要改，
 		// 仅登记版本以便 preSchemaGuard 在变更前强制备份。
 		// 旧库没有任何计划单，不需要回填；现有预算、流水一行都不动。
+	},
+	5: {
+		// v5 新增「库存品类可维护」：stock_categories 表由 schemaStatements 幂等创建，
+		// 内置 6 类由 openDB 里的 seedStockCategories 在表为空时写入。
+		// 不改动任何现有库存项：它们的 category_key / category_name 原样保留，
+		// 品类表建好后 name 反查、保质期计算、OCR 关键词都能从表里读到。
 	},
 }
 

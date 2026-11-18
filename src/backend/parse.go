@@ -96,7 +96,7 @@ var medicineFormExclusions = []string{
 }
 
 func matchStockRule(name string) (stockRule, bool) {
-	for _, r := range stockRules {
+	for _, r := range loadStockRules() {
 		for _, kw := range r.Keywords {
 			if strings.Contains(name, kw) {
 				return r, true
