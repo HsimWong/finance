@@ -25,3 +25,14 @@ __pycache__/
 
 # 误建的 shell 展开目录（$(pwd) 字面量）
 src/backend/$(pwd)/
+
+# 本地诊断临时产物（浏览器 profile / 截图 / CDP 脚本 / clone 测试）
+.chrome-*/
+.shot-*.png
+.cdp-check*.mjs
+.clone-test/
+.dom-*.txt
+.dom-*.html
+.chrome-console*.txt
+.chrome-stderr.txt
+.chrome-stdout.txt
