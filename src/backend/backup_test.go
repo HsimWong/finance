@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -56,6 +57,46 @@ func countNote(t *testing.T, dbPath, note string) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// TestKeepOnlyLatestBackup 守住用户规则：备份目录始终只有最新一份，
+// 旧的 .db/.json 与孤立 -wal/-shm 都被清掉。
+func TestKeepOnlyLatestBackup(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "finance.db")
+	d := openTestDB(t, dbPath)
+	defer d.Close()
+
+	b1, err := backupDB(d, dbPath, "older")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 造一个旧的孤立附属文件，验证一并清理
+	orphan := b1 + "-wal"
+	if err := os.WriteFile(orphan, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	insertTestEntry(t, d, "第二份备份才有")
+	b2, err := backupDB(d, dbPath, "latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b1 == b2 {
+		t.Fatal("两次备份路径不应相同")
+	}
+	if n := countNote(t, b2, "第二份备份才有"); n != 1 {
+		t.Fatalf("最新备份应包含最新数据，count=%d", n)
+	}
+	dbs, _ := filepath.Glob(filepath.Join(backupDir(dbPath), "*.db"))
+	if len(dbs) != 1 || dbs[0] != b2 {
+		t.Fatalf("应只剩最新一份备份，实际: %v", dbs)
+	}
+	if _, err := os.Stat(b1); !os.IsNotExist(err) {
+		t.Fatalf("旧备份未被删除: %v", err)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("孤立 -wal 未被删除: %v", err)
+	}
 }
 
 func TestBackupContainsWALData(t *testing.T) {

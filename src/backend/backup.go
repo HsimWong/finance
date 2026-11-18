@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 )
@@ -21,7 +20,6 @@ import (
 //
 // 备份使用 VACUUM INTO，生成包含 WAL 已提交数据的单文件一致性快照。
 const schemaVersion = 4
-const maxStartupBackups = 20
 
 // migrations[版本号] = 从「版本号-1」升级到「版本号」要执行的语句。
 // v1 只是给既有库打版本号标记（表结构由 schemaStatements 幂等维护），无破坏性语句。
@@ -245,7 +243,30 @@ func backupDB(d *sql.DB, dbPath, label string) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, base+".json"), b, 0o644); err != nil {
 		return path, fmt.Errorf("备份已生成，但写元数据失败: %w", err)
 	}
+	// 用户规则（2026-11-18）：始终只保留最新一份备份，其余删除以节省存储。
+	// 所有备份都经过本函数，因此这里是唯一收敛点；保留下来的这份是刚生成、
+	// 已通过 integrity_check 且行数/哈希齐全的最新快照，可直接用于回档。
+	pruneKeepLatest(dir, path)
 	return path, nil
+}
+
+// pruneKeepLatest 把备份目录收敛到只剩 keepPath 一份（含 .json 元数据），
+// 并清掉没有对应 .db 的孤立 -wal / -shm 残留。
+// 注意：变更前强制备份仍在 backupDB 里照常生成，只是旧备份随即被回收——
+// 最新那份永远包含完整、已提交的数据，恢复能力不受影响。
+func pruneKeepLatest(dir, keepPath string) {
+	keepBase := strings.TrimSuffix(filepath.Base(keepPath), ".db")
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		name := e.Name()
+		if name == keepBase+".db" || name == keepBase+".json" {
+			continue
+		}
+		if strings.HasSuffix(name, ".db") || strings.HasSuffix(name, ".json") ||
+			strings.HasSuffix(name, ".db-wal") || strings.HasSuffix(name, ".db-shm") {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+	}
 }
 
 func currentUserVersion(d *sql.DB) int {
@@ -287,15 +308,17 @@ func applyMigrations(d *sql.DB) error {
 	return nil
 }
 
-// startupSnapshot 每次启动留一份快照（30 分钟内已有则跳过），滚动保留最近 20 份。
-// 这是「真实数据可恢复」的兜底层：即使某次误操作没手动备份，也能回到最近一次启动的状态。
+// startupSnapshot 每次启动留一份快照（30 分钟内已有任意备份则跳过）。
+// 这是「真实数据可恢复」的兜底层：即使某次误操作没手动备份，也能回到最近一次的状态。
+// 配合 pruneKeepLatest：目录里始终只有一份，故这里按「任意备份」去重，
+// 避免刚做完变更前的强制备份又被启动快照覆盖掉。
 func startupSnapshot(d *sql.DB, dbPath string) {
 	dir := backupDir(dbPath)
 	entries, _ := os.ReadDir(dir)
 	var newest time.Time
 	for _, e := range entries {
 		name := e.Name()
-		if !strings.HasSuffix(name, ".db") || !strings.Contains(name, "_startup") || len(name) < 15 {
+		if !strings.HasSuffix(name, ".db") || len(name) < 15 {
 			continue
 		}
 		if t, err := time.ParseInLocation("20060102-150405", name[:15], time.Local); err == nil && t.After(newest) {
@@ -311,19 +334,7 @@ func startupSnapshot(d *sql.DB, dbPath string) {
 		return
 	}
 	log.Printf("启动快照: %s", filepath.Base(p))
-
-	pruneByLabel(dir, "startup", maxStartupBackups)
-}
-
-func pruneByLabel(dir, label string, keep int) {
-	files, _ := filepath.Glob(filepath.Join(dir, "*_"+label+"*.db"))
-	sort.Strings(files)
-	if len(files) > keep {
-		for _, f := range files[:len(files)-keep] {
-			_ = os.Remove(f)
-			_ = os.Remove(strings.TrimSuffix(f, ".db") + ".json")
-		}
-	}
+	// 收敛由 backupDB 内的 pruneKeepLatest 统一完成。
 }
 
 // dataFingerprint 用一组轻量聚合值判断业务数据是否变化。
@@ -367,8 +378,8 @@ func dataFingerprint(d *sql.DB) string {
 }
 
 // startSnapshotLoop 是试用期间真实数据的兜底层：服务长期不重启时，
-// 只要数据发生变化就自动留一份快照；每天的第一份标为 daily-YYYYMMDD 永久保留，
-// 其余标为 auto 滚动保留最近 48 份（默认 30 分钟一轮即覆盖约 24 小时）。
+// 只要数据发生变化就自动留一份快照。按用户规则，新备份一生成就由
+// backupDB 收敛为目录内唯一一份（当天首份标 daily-YYYYMMDD，其余 auto）。
 func startSnapshotLoop(d *sql.DB, dbPath string, interval time.Duration) func() {
 	if interval <= 0 {
 		log.Printf("运行时自动快照：已关闭")
@@ -401,7 +412,6 @@ func startSnapshotLoop(d *sql.DB, dbPath string, interval time.Duration) func() 
 					continue
 				}
 				log.Printf("检测到数据变化，已自动快照: %s", filepath.Base(p))
-				pruneByLabel(backupDir(dbPath), "auto", 48)
 			}
 		}
 	}()

@@ -16,6 +16,10 @@ logs/
 scripts/bin/*.pid
 debug.log
 
+# Python 字节码缓存
+__pycache__/
+*.pyc
+
 # WorkBuddy 本地应用链接（含本机绝对路径）
 *.genie
 

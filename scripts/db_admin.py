@@ -16,7 +16,7 @@
 --------
     python scripts/db_admin.py info                     # 当前各表行数 / WAL 状态
     python scripts/db_admin.py list                    # 列出全部备份
-    python scripts/db_admin.py backup --label 试用前    # 手动备份（永久保留）
+    python scripts/db_admin.py backup --label before-xxx  # 备份（只保留最新一份）
     python scripts/db_admin.py verify <备份.db>         # 完整性 + 哈希校验
     python scripts/db_admin.py reset --yes --force-with-data  # 清空业务数据（真实数据需二次确认）
     python scripts/db_admin.py restore <备份.db> --yes # 备份现状后回档（须先停服务）
@@ -96,7 +96,7 @@ def require_service_stopped(allow_running: bool) -> None:
         )
 
 
-def do_backup(label: str) -> Path:
+def do_backup(label: str, protect: Path | None = None) -> Path:
     if not DB.exists():
         sys.exit(f"错误：数据库不存在 {DB}")
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -137,16 +137,26 @@ def do_backup(label: str) -> Path:
     )
     print(f"备份完成: data/backups/{base}.db  ({meta['size_bytes']} bytes, sha256:{meta['sha256_16']})")
     print(f"完整性: {meta['integrity_check']} | 各表行数: {json.dumps(meta['table_rows'], ensure_ascii=False)}")
-    prune_startup()
+    prune_keep_latest(out, protect=protect)
     return out
 
 
-def prune_startup(keep: int = 20) -> None:
-    """自动快照滚动保留；手动备份与变更前的备份永不自动删除。"""
-    files = sorted(BACKUP_DIR.glob("*_startup*.db"), key=lambda p: p.name)
-    for p in files[:-keep] if len(files) > keep else []:
-        p.unlink(missing_ok=True)
-        p.with_suffix(".json").unlink(missing_ok=True)
+def prune_keep_latest(keep: Path, protect: Path | None = None) -> None:
+    """只保留最新一份备份（.db + .json），其余全部删除以节省存储。
+
+    用户规则（2026-11-18）：always keep the latest backup, abort others。
+    protect 用于回档场景：回档来源在被拷贝完成前不能被删。
+    同时清理没有对应 .db 的孤立 -wal / -shm 残留。
+    """
+    keep_names = {keep.name, keep.with_suffix(".json").name}
+    if protect is not None:
+        keep_names.add(protect.name)
+        keep_names.add(protect.with_suffix(".json").name)
+    for p in BACKUP_DIR.iterdir():
+        if p.name in keep_names:
+            continue
+        if p.suffix in (".db", ".json") or p.name.endswith((".db-wal", ".db-shm")):
+            p.unlink(missing_ok=True)
 
 
 def do_info() -> None:
@@ -270,7 +280,8 @@ def do_restore(path: Path, yes: bool, allow_running: bool) -> None:
     finally:
         con.close()
     if DB.exists():
-        do_backup("before-restore")
+        # 保护待回档的源备份，避免被「只留最新」清理掉导致拷贝到一半文件消失
+        do_backup("before-restore", protect=path)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, DB)
     # 旧 WAL / SHM 必须删除，否则会覆盖回档进来的数据
@@ -284,6 +295,10 @@ def do_restore(path: Path, yes: bool, allow_running: bool) -> None:
         print("integrity_check:", con.execute("PRAGMA integrity_check").fetchone()[0])
     finally:
         con.close()
+    # 回档成功后收敛：保留最新的 before-restore 快照（回档前的现状），删掉受保护的来源
+    newest = max(BACKUP_DIR.glob("*.db"), key=lambda p: p.name, default=None)
+    if newest is not None:
+        prune_keep_latest(newest)
 
 
 def main() -> None:
