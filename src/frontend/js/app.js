@@ -284,9 +284,9 @@ function renderSettings() {
     ? state.meta.tags.map((t) => `<span class="tag-mini" style="font-size:13px;padding:4px 10px;margin:0 6px 6px 0">${esc(t.name)}</span>`).join('')
     : '<div class="empty">还没有标签</div>';
 
-  const cats = state.stockCategories || [];
+  const stockCats = state.stockCategories || [];
   const catBox = $('#settings-stock-categories');
-  if (catBox) catBox.innerHTML = cats.length ? cats.map((c) => `<div class="list-item">
+  if (catBox) catBox.innerHTML = stockCats.length ? stockCats.map((c) => `<div class="list-item">
       <span class="grow"><b>${esc(c.name)}</b>
         ${c.is_builtin ? '<span class="muted">内置</span>' : ''}
         <span class="muted">${c.shelf_days} 天 · ${c.item_count} 项库存</span>
