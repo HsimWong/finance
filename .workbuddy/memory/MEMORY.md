@@ -10,7 +10,7 @@
 ## 用户明确的技术约束（不要擅自改变）
 
 - 后端：**无框架 Go**，允许用库，不引 Web 框架。
-- 前端：**不使用框架**，纯 HTML + CSS + JavaScript，无构建步骤。
+- 前端：**不使用框架**，纯 HTML + CSS + JavaScript，无构建步骤。**【强制】每次改完 `src/frontend/js/*.js` 必须 `node --check`**（本机 node v22 可用）；`go test` 完全抓不到 JS 语法错误。2026-11-18 曾因 `renderSettings()` 里 `const cats` 重复声明导致整个 app.js 不执行、全站白屏（用户以为数据库丢了），排查时用 Node 内置 WebSocket 连 Chrome `--remote-debugging-port` 走 CDP 收 `Runtime.exceptionThrown` 才定位到（截图会把空页面拍下来误导为"截图时机"）。前端是静态文件，改动无需重编译后端/动数据库，强刷即生效。
 - 数据库：**本地 SQLite**；截图保存在服务端且图片入库。
 - 开发方式：**敏捷**，先把已确定的功能搭出可运行增量，再逐步补。
 - **【强制】试用期间任何需要动数据库的新需求，必须先保存好真实数据、确认可恢复后再改。** 固定流程：`python scripts/db_admin.py backup --label before-xxx` → `verify` → 才动代码/结构 → 启动后 `info` 核对行数。绝不允许直接删库重来。
