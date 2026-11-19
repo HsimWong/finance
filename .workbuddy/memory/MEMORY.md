@@ -14,6 +14,8 @@
 - **备份只保留最新一份**（用户 2026-11-18 明确），其余全删省空间。已在 `backupDB`（Go）与 `db_admin.py` 实现自动收敛（含孤立 -wal/-shm 清理、restore 保护来源）。变更过程中保留变更前快照，**任务收尾时**收敛到唯一一份。此规则覆盖旧的"startup 20 份/auto 48 份/daily 永久"约定。
 - **所有 URL 必须相对路径**（`api/x` 而非 `/api/x`）：系统挂在阿里云 `/finance/` 与 WorkBuddy 网关下，绝对路径会 404。后端跳转用自写 `redirectRel`，不用 `http.Redirect`。
 - **交叉编译二进制必须带 `-root`**：systemd 里显式 `-root /home/admin/finance`，否则读不到 `.env` → 鉴权静默关闭、DB 路径错。
+- **库存同步必须显式**：`entryInput.SyncStock bool` 控制；不传/false 完全不碰库存，true+清单重建本流水自动项，true+`[]` 清空自动项。**禁止再用 nil/空数组/非空编码多种副作用**（用户 2026-11-19 严令，别拿"需求/架构"当挡箭牌，这是 bug）。手工库存 `auto_created=0` 任何路径都不动。
+- **SQLite 单连接（`SetMaxOpenConns(1)`）下事务内禁止用全局 `db` 查询**：会永久死锁。品类规则读取有 `loadStockRulesFrom/findStockRuleByKeyFrom/matchStockRuleFrom/resolveStockCategoryFrom`，事务里一律传 `tx`。卡死时用 `go test -timeout 25s` 看 goroutine 栈定位。
 
 ## 已定技术决策（速览）
 
@@ -23,9 +25,9 @@
 - **库存品类（v5 可维护）**：`stock_categories` 表落库，写死 `stockRules` 仅兜底/种子。`loadStockRules()` 运行时读表，自定义（`is_builtin=0`）优先；规则经 `/api/meta` 的 `stock_rules` 下发所有下拉。内置 6 类只在表空时种子。品类 key 稳定，改名同步 `stock_items.category_name`，有引用则拒绝删除。判定优先级 `resolveStockCategory`：显式有效 `category_key` 优先（勿用物品名覆盖）→ 名称匹配 → other → 兜底其他。管理 API `/api/stock-categories`，UI 在基础数据页。
 - **计划单（v4）**：`plans` + `plan_allocations` 多对多关联预算，不动 allocations。clear = 标记 completed + 完成时间，不删任何行。流水挂预算时在同一事务内 clear 整张计划单（`clearPlansForAllocation`），去掉关联不回滚。可 reopen。
 - **数据保护（ADR 0002）**：WAL 下禁止裸拷 db 当备份。`backup.go` 用 `VACUUM INTO` + `user_version` 版本化迁移，变更前强制备份、失败中止启动。schemaVersion 现为 **5**。
-- **访问口令**：`auth.go` 的 authGate，Cookie(`finance_access` 30 天)/`?token=`/`X-Access-Token` 三种，常量时间比较，同 IP 10 分钟失败 10 次 429。口令来自 `.env` 的 `ACCESS_TOKEN`，空则关闭（仅可信内网）。公网必须开启。
+- **访问口令**：`auth.go` 的 authGate，Cookie(`finance_access` 30 天)/`?token=`/`X-Access-Token` 三种，常量时间比较，同 IP 10 分钟失败 10 次 429。口令来自 `.env` 的 `ACCESS_TOKEN`，空则关闭（仅可信内网）。公网必须开启。`isPublicStatic` 仅放行 `/manifest.json`、`/sw.js`、`/icons/*` 供 PWA 安装（浏览器拉 manifest 不带页面 Cookie，不放行会 401 装不上）；API/页面仍严格鉴权。
 - **配置**：`config.go` 解析 `.env`（KEY=VALUE，export/引号），优先级 `-addr` > 环境变量 > .env > 默认。`ACCESS_TOKEN` 不入库，模板 `.env.example`。
-- **手机极简页**：`mobile.html`+`js/mobile.js`+`css/mobile.css`，只做拍照→OCR→核对→保存，共用 Cookie。`isMobileUA` 在 `GET /` 302 到手机页，`/?desktop=1` 强制电脑版，iPad 不判移动。
+- **手机端 PWA（2026-11-19）**：`mobile.html`+`js/mobile.js`+`css/mobile.css` 是 app 式布局（底部导航：记账/账单/我的），支持手动记账、拍照 OCR、按月账单列表与汇总、添加到主屏幕；`manifest.json`+`sw.js`+`icons/` 为 PWA 外壳，SW 只缓存 app shell 不缓存 API。共用 Cookie，`isMobileUA` 在 `GET /` 302 到手机页，`/?desktop=1` 强制电脑版，iPad 不判移动。手机端需能看账单，不再只是拍照页。
 - **一键启动**：`bash scripts/start.sh`（--local/--stop/--restart），编译→服务→隧道→打印地址；端口口令读 .env 不写死。
 
 ## 公网三处部署
