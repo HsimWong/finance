@@ -45,13 +45,27 @@ func normalizeKeywords(s string) string {
 	return strings.Join(out, ",")
 }
 
+// stockRuleQuerier 同时被 *sql.DB 和 *sql.Tx 实现。
+// SQLite 单连接下，事务内绝不能再通过全局 db 查询——唯一连接被事务占着，会永久等待（死锁）。
+// 事务中的调用方必须把 tx 传进来，走同一条连接。
+type stockRuleQuerier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
 // loadStockRules 运行时从库里读品类规则；库不可用或为空时回退到内置兜底。
 // 排序：自定义品类优先（is_builtin 0 在前），其次按用户设定的 sort_order。
 func loadStockRules() []stockRule {
 	if db == nil {
 		return stockRules
 	}
-	rows, err := db.Query(`SELECT key, name, keywords, shelf_days FROM stock_categories
+	return loadStockRulesFrom(db)
+}
+
+func loadStockRulesFrom(q stockRuleQuerier) []stockRule {
+	if q == nil {
+		return stockRules
+	}
+	rows, err := q.Query(`SELECT key, name, keywords, shelf_days FROM stock_categories
 		ORDER BY is_builtin ASC, sort_order ASC, id ASC`)
 	if err != nil {
 		return stockRules

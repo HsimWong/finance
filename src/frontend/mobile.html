@@ -2,70 +2,128 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
 <meta name="theme-color" content="#5b4bdb">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>记一笔 · 家庭账本</title>
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="家庭账本">
+<meta name="format-detection" content="telephone=no">
+<title>家庭账本 · 记一笔</title>
 <link rel="stylesheet" href="css/mobile.css">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
 </head>
 <body>
 
 <header class="bar">
-  <div class="brand">记一笔</div>
-  <a class="link" href="./?desktop=1">电脑版</a>
+  <div class="brand"><span class="logo">¥</span><span id="page-title">记一笔</span></div>
+  <button class="bar-act" id="m-install" type="button" hidden>装到桌面</button>
+  <a class="bar-act" id="m-desktop" href="./?desktop=1">电脑版</a>
 </header>
 
 <main>
-  <section class="shot">
-    <input type="file" id="m-file" accept="image/*" hidden>
-    <button class="pick" id="m-pick" type="button">
-      <span class="plus">＋</span>
-      <span class="pick-text">拍照 / 选择账单</span>
-    </button>
+  <!-- 记账 -->
+  <section class="view" id="view-add">
+    <div class="hero" id="m-hero">
+      <div class="hero-emoji">📷</div>
+      <div class="hero-title">拍张账单，自动记账</div>
+      <div class="hero-sub">或直接手动填一笔</div>
+      <button class="shot-btn" id="m-pick" type="button">拍照 / 选择账单</button>
+      <input type="file" id="m-file" accept="image/*" hidden>
+    </div>
+
     <div id="m-preview" class="preview" hidden>
       <img id="m-img" alt="账单预览">
+      <button class="preview-x" id="m-preview-x" type="button" aria-label="移除图片">×</button>
     </div>
     <p id="m-status" class="status"></p>
+
+    <section class="form" id="m-form">
+      <div class="seg" id="m-type">
+        <button type="button" data-type="expense" class="on">支出</button>
+        <button type="button" data-type="income">收入</button>
+      </div>
+
+      <label class="field amount">
+        <span>金额</span>
+        <div class="amount-box">
+          <em>¥</em>
+          <input id="m-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+        </div>
+      </label>
+
+      <label class="field">
+        <span>分类</span>
+        <select id="m-category"></select>
+      </label>
+
+      <label class="field">
+        <span>时间</span>
+        <input id="m-time" type="datetime-local">
+      </label>
+
+      <label class="field">
+        <span>备注</span>
+        <input id="m-note" type="text" placeholder="商户 / 说明" enterkeyhint="done">
+      </label>
+
+      <label class="field">
+        <span>记账人</span>
+        <select id="m-member"></select>
+      </label>
+
+      <div class="items" id="m-items-wrap" hidden>
+        <div class="items-title">已自动识别物品 <b id="m-items-count"></b></div>
+        <ul id="m-items"></ul>
+      </div>
+
+      <button class="save" id="m-save" type="button">保存这笔</button>
+      <p class="hint" id="m-today"></p>
+    </section>
   </section>
 
-  <section class="form" id="m-form" hidden>
-    <div class="seg" id="m-type">
-      <button type="button" data-type="expense" class="on">支出</button>
-      <button type="button" data-type="income">收入</button>
+  <!-- 账单 -->
+  <section class="view" id="view-list" hidden>
+    <div class="month-bar">
+      <button class="month-nav" id="m-prev" type="button" aria-label="上个月">‹</button>
+      <div class="month-label" id="m-month">本月</div>
+      <button class="month-nav" id="m-next" type="button" aria-label="下个月">›</button>
     </div>
-
-    <label class="field amount">
-      <span>金额</span>
-      <div class="amount-box">
-        <em>¥</em>
-        <input id="m-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
-      </div>
-    </label>
-
-    <label class="field">
-      <span>时间</span>
-      <input id="m-time" type="datetime-local">
-    </label>
-
-    <label class="field">
-      <span>分类</span>
-      <select id="m-category"></select>
-    </label>
-
-    <label class="field">
-      <span>备注</span>
-      <input id="m-note" type="text" placeholder="商户 / 说明" enterkeyhint="done">
-    </label>
-
-    <div class="items" id="m-items-wrap" hidden>
-      <div class="items-title">已自动入库 <b id="m-items-count"></b></div>
-      <ul id="m-items"></ul>
+    <div class="summary" id="m-summary">
+      <div class="sum-item"><span>支出</span><b class="expense" id="m-sum-expense">¥0.00</b></div>
+      <div class="sum-item"><span>收入</span><b class="income" id="m-sum-income">¥0.00</b></div>
+      <div class="sum-item"><span>笔数</span><b id="m-sum-count">0</b></div>
     </div>
+    <div class="seg filter" id="m-filter">
+      <button type="button" data-filter="all" class="on">全部</button>
+      <button type="button" data-filter="expense">支出</button>
+      <button type="button" data-filter="income">收入</button>
+    </div>
+    <div id="m-list" class="entry-list"></div>
+  </section>
 
-    <button class="save" id="m-save" type="button">保存这笔</button>
-    <p class="hint" id="m-today"></p>
+  <!-- 我的 -->
+  <section class="view" id="view-me" hidden>
+    <div class="me-card">
+      <div class="me-head"><span class="me-logo">¥</span><div><b>家庭账本</b><small id="m-me-sub">本地私密账本</small></div></div>
+    </div>
+    <div class="me-group">
+      <button class="me-row" id="m-install2" type="button" hidden><span>📲</span><span>安装到手机桌面</span><em>›</em></button>
+      <a class="me-row" href="./?desktop=1"><span>💻</span><span>打开电脑完整版</span><em>›</em></a>
+      <button class="me-row" id="m-reload" type="button"><span>🔄</span><span>刷新数据</span><em>›</em></button>
+    </div>
+    <p class="me-note" id="m-net">—</p>
+    <p class="me-foot">数据存于自家服务器，仅供家庭使用</p>
   </section>
 </main>
+
+<nav class="tabs" id="m-tabs">
+  <button class="tab on" data-view="add" type="button"><span class="tab-ico">✎</span><span>记账</span></button>
+  <button class="tab" data-view="list" type="button"><span class="tab-ico">☰</span><span>账单</span></button>
+  <button class="tab" data-view="me" type="button"><span class="tab-ico">☺</span><span>我的</span></button>
+</nav>
 
 <div id="m-toast" class="toast"></div>
 <script type="module" src="js/mobile.js"></script>

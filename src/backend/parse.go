@@ -96,7 +96,12 @@ var medicineFormExclusions = []string{
 }
 
 func matchStockRule(name string) (stockRule, bool) {
-	for _, r := range loadStockRules() {
+	return matchStockRuleFrom(db, name)
+}
+
+// matchStockRuleFrom 与 matchStockRule 语义相同，但支持传入事务连接，避免单连接死锁。
+func matchStockRuleFrom(q stockRuleQuerier, name string) (stockRule, bool) {
+	for _, r := range loadStockRulesFrom(q) {
 		for _, kw := range r.Keywords {
 			if strings.Contains(name, kw) {
 				return r, true
@@ -104,7 +109,7 @@ func matchStockRule(name string) (stockRule, bool) {
 		}
 	}
 	if !containsAny(name, medicineFormExclusions) && containsAny(name, medicineForms) {
-		if r, ok := findStockRuleByKey("medicine"); ok {
+		if r, ok := findStockRuleByKeyFrom(q, "medicine"); ok {
 			return r, true
 		}
 	}

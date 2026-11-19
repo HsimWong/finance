@@ -509,8 +509,8 @@ func handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "保存标签失败: %v", err)
 		return
 	}
-	if in.StockItems != nil {
-		if err := saveAutoStockItems(tx, id, *in.StockItems); err != nil {
+	if in.SyncStock {
+		if err := saveAutoStockItems(tx, id, in.StockItems); err != nil {
 			writeErr(w, 500, "家庭用品自动入库失败: %v", err)
 			return
 		}
@@ -576,8 +576,8 @@ func handleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "保存标签失败: %v", err)
 		return
 	}
-	if in.StockItems != nil {
-		if err := saveAutoStockItems(tx, id, *in.StockItems); err != nil {
+	if in.SyncStock {
+		if err := saveAutoStockItems(tx, id, in.StockItems); err != nil {
 			writeErr(w, 500, "家庭用品自动入库失败: %v", err)
 			return
 		}

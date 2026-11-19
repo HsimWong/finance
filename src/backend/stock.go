@@ -144,7 +144,12 @@ func queryStockItems(v map[string]string) ([]StockItem, error) {
 }
 
 func findStockRuleByKey(key string) (stockRule, bool) {
-	for _, r := range loadStockRules() {
+	return findStockRuleByKeyFrom(db, key)
+}
+
+// findStockRuleByKeyFrom 与 findStockRuleByKey 语义相同，但支持传入事务连接。
+func findStockRuleByKeyFrom(q stockRuleQuerier, key string) (stockRule, bool) {
+	for _, r := range loadStockRulesFrom(q) {
 		if r.Key == key {
 			return r, true
 		}
@@ -160,15 +165,20 @@ func findStockRuleByKey(key string) (stockRule, bool) {
 // 「别嘌醇缓释胶囊」选了药品却因为名字里没有「药」字被写成「其他」——
 // 库里 key=medicine、name=其他 这种自相矛盾的数据就是这么产生的。
 func resolveStockCategory(key, catName, itemName string) (string, string) {
+	return resolveStockCategoryFrom(db, key, catName, itemName)
+}
+
+// resolveStockCategoryFrom 与 resolveStockCategory 语义相同，但支持传入事务连接。
+func resolveStockCategoryFrom(q stockRuleQuerier, key, catName, itemName string) (string, string) {
 	key = strings.TrimSpace(key)
 	catName = strings.TrimSpace(catName)
 	if key != "" && key != "other" {
-		if r, ok := findStockRuleByKey(key); ok {
+		if r, ok := findStockRuleByKeyFrom(q, key); ok {
 			return r.Key, r.Name // 显式选择，以 key 为准
 		}
 	}
 	if key != "other" {
-		if r, ok := matchStockRule(itemName); ok {
+		if r, ok := matchStockRuleFrom(q, itemName); ok {
 			return r.Key, r.Name // 未指定品类，按名称推断
 		}
 	}
@@ -199,7 +209,7 @@ func saveAutoStockItems(tx *sql.Tx, entryID int64, items []stockItemInput) error
 		}
 		catName := strings.TrimSpace(it.CategoryName)
 		if catName == "" {
-			if r, ok := findStockRuleByKey(it.CategoryKey); ok {
+			if r, ok := findStockRuleByKeyFrom(tx, it.CategoryKey); ok {
 				catName = r.Name
 			} else {
 				catName = "其他"
@@ -211,7 +221,7 @@ func saveAutoStockItems(tx *sql.Tx, entryID int64, items []stockItemInput) error
 		}
 		expiry := strings.TrimSpace(it.ExpiryDate)
 		if expiry == "" {
-			if r, ok := findStockRuleByKey(key); ok {
+			if r, ok := findStockRuleByKeyFrom(tx, key); ok {
 				expiry = time.Now().AddDate(0, 0, r.ShelfDays).Format("2006-01-02")
 			}
 		}
@@ -330,10 +340,10 @@ func saveManualStockItem(tx *sql.Tx, in stockItemInput) error {
 	if unit == "" {
 		unit = "件"
 	}
-	key, catName := resolveStockCategory(in.CategoryKey, in.CategoryName, in.Name)
+	key, catName := resolveStockCategoryFrom(tx, in.CategoryKey, in.CategoryName, in.Name)
 	expiry := strings.TrimSpace(in.ExpiryDate)
 	if expiry == "" {
-		if r, ok := findStockRuleByKey(key); ok {
+		if r, ok := findStockRuleByKeyFrom(tx, key); ok {
 			expiry = time.Now().AddDate(0, 0, r.ShelfDays).Format("2006-01-02")
 		}
 	}

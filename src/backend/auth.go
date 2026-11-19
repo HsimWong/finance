@@ -84,6 +84,16 @@ func (g *authGate) authorized(r *http.Request) bool {
 	return g.valid(r.Header.Get("X-Access-Token"))
 }
 
+// isPublicStatic 判断是否为可匿名获取的 PWA 静态资源。
+// 浏览器安装 PWA 时用独立请求拉 manifest（不携带页面 Cookie），必须放行，否则永远装不上。
+// 放行的只有清单、SW 脚本和图标，均不含账本数据；API 与页面仍严格鉴权。
+func isPublicStatic(path string) bool {
+	if path == "/manifest.json" || path == "/sw.js" {
+		return true
+	}
+	return strings.HasPrefix(path, "/icons/")
+}
+
 func (g *authGate) wrap(next http.Handler) http.Handler {
 	if !g.enabled() {
 		return next
@@ -91,6 +101,10 @@ func (g *authGate) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/__auth" {
 			g.handleLogin(w, r)
+			return
+		}
+		if isPublicStatic(r.URL.Path) {
+			next.ServeHTTP(w, r)
 			return
 		}
 		if g.authorized(r) {

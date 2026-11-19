@@ -619,6 +619,9 @@ function bindEvents() {
     e.preventDefault();
     const f = e.currentTarget;
     await guard(async () => {
+      // 只有 OCR 识别出的账单才显式要求重建自动入库项；
+      // 手动记账 sync_stock=false，后端完全不碰库存，不再依赖"字段传没传"的隐式语义。
+      const stockItems = state.recognition ? collectStockItems() : [];
       await post('api/entries', {
         type: $(`input[name="type"]:checked`, f).value,
         amount: formVal(f, 'amount'),
@@ -630,9 +633,10 @@ function bindEvents() {
         source: formVal(f, 'screenshot_id') ? 'screenshot' : 'manual',
         note: formVal(f, 'note'),
         tag_ids: checkedTags($('#entry-tag-box')),
-        stock_items: state.recognition ? collectStockItems() : undefined,
+        sync_stock: !!state.recognition,
+        stock_items: stockItems,
       });
-      const stockCount = state.recognition ? collectStockItems().length : 0;
+      const stockCount = stockItems.length;
       toast(stockCount ? `流水已保存，${stockCount} 项家庭用品已自动入库` : '流水已保存');
       f.reset();
       resetEntryDefaults();

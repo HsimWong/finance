@@ -195,9 +195,12 @@ type entryInput struct {
 	ScreenshotID *int64  `json:"screenshot_id"`
 	Source       string  `json:"source"`
 	Note         string  `json:"note"`
-	TagIDs       []int64 `json:"tag_ids"`
-	// nil 表示本次不改动库存；(指向空切片) 表示明确清空自动生成项。
-	StockItems *[]stockItemInput `json:"stock_items"`
+	TagIDs     []int64 `json:"tag_ids"`
+	// SyncStock 显式声明本次是否同步库存，不传/false 表示完全不碰库存。
+	// 为 true 时以 StockItems 为准重建本流水的自动入库项；传空数组即清空自动项。
+	// 用户手工维护的库存（auto_created=0）任何时候都不受影响。
+	SyncStock  bool              `json:"sync_stock"`
+	StockItems []stockItemInput  `json:"stock_items"`
 }
 
 type allocationInput struct {
