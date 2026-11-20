@@ -2,7 +2,7 @@
 // 策略：app shell 预缓存（离线可开），API 一律走网络（账单实时、不缓存敏感数据）。
 // 注意：本项目挂在 /finance/ 子路径下，所有路径必须相对，不能用 / 开头。
 
-const CACHE = 'finance-mobile-v1';
+const CACHE = 'finance-mobile-v2';
 const SHELL = [
   './mobile.html',
   './css/mobile.css',
