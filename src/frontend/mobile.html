@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="家庭账本">
 <meta name="format-detection" content="telephone=no">
-<title>家庭账本 · 记一笔</title>
+<title>家庭账本</title>
 <link rel="stylesheet" href="css/mobile.css">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -19,8 +19,10 @@
 
 <header class="bar">
   <div class="brand"><span class="logo">¥</span><span id="page-title">记一笔</span></div>
-  <button class="bar-act" id="m-install" type="button" hidden>装到桌面</button>
-  <a class="bar-act" id="m-desktop" href="./?desktop=1">电脑版</a>
+  <div>
+    <button class="bar-act" id="m-install" type="button" hidden>装到桌面</button>
+    <a class="bar-act" id="m-desktop" href="./?desktop=1">电脑版</a>
+  </div>
 </header>
 
 <main>
@@ -84,7 +86,7 @@
     </section>
   </section>
 
-  <!-- 账单 -->
+  <!-- 账单（只查看，不展示拍照/记账入口） -->
   <section class="view" id="view-list" hidden>
     <div class="month-bar">
       <button class="month-nav" id="m-prev" type="button" aria-label="上个月">‹</button>
@@ -104,15 +106,32 @@
     <div id="m-list" class="entry-list"></div>
   </section>
 
-  <!-- 我的 -->
-  <section class="view" id="view-me" hidden>
+  <!-- 总览 -->
+  <section class="view" id="view-overview" hidden>
     <div class="me-card">
       <div class="me-head"><span class="me-logo">¥</span><div><b>家庭账本</b><small id="m-me-sub">本地私密账本</small></div></div>
     </div>
+
+    <div class="ov-grid">
+      <button class="ov-card" data-sub="budget" type="button">
+        <span class="ov-ico">💰</span><b>预算</b><small id="ov-budget">点击加载</small>
+      </button>
+      <button class="ov-card" data-sub="usage" type="button">
+        <span class="ov-ico">📊</span><b>使用情况</b><small id="ov-usage">点击加载</small>
+      </button>
+      <button class="ov-card" data-sub="plans" type="button">
+        <span class="ov-ico">🎯</span><b>计划单</b><small id="ov-plans">点击加载</small>
+      </button>
+      <button class="ov-card" data-sub="stock" type="button">
+        <span class="ov-ico">📦</span><b>库存</b><small id="ov-stock">点击加载</small>
+      </button>
+    </div>
+
     <div class="me-group">
+      <button class="me-row" data-sub="base" type="button"><span>🗂</span><span>基础数据</span><em>›</em></button>
       <button class="me-row" id="m-install2" type="button" hidden><span>📲</span><span>安装到手机桌面</span><em>›</em></button>
-      <a class="me-row" href="./?desktop=1"><span>💻</span><span>打开电脑完整版</span><em>›</em></a>
       <button class="me-row" id="m-reload" type="button"><span>🔄</span><span>刷新数据</span><em>›</em></button>
+      <a class="me-row" href="./?desktop=1"><span>💻</span><span>打开电脑完整版</span><em>›</em></a>
     </div>
     <p class="me-note" id="m-net">—</p>
     <p class="me-foot">数据存于自家服务器，仅供家庭使用</p>
@@ -122,8 +141,18 @@
 <nav class="tabs" id="m-tabs">
   <button class="tab on" data-view="add" type="button"><span class="tab-ico">✎</span><span>记账</span></button>
   <button class="tab" data-view="list" type="button"><span class="tab-ico">☰</span><span>账单</span></button>
-  <button class="tab" data-view="me" type="button"><span class="tab-ico">☺</span><span>我的</span></button>
+  <button class="tab" data-view="overview" type="button"><span class="tab-ico">▦</span><span>总览</span></button>
 </nav>
+
+<!-- 二级页面：账单详情 / 预算 / 使用情况 / 计划单 / 库存 / 基础数据 -->
+<div class="sheet" id="m-sub" hidden>
+  <div class="sheet-bar">
+    <button class="sheet-back" id="m-sub-back" type="button">‹ 返回</button>
+    <b id="m-sub-title">详情</b>
+    <span class="sheet-spacer"></span>
+  </div>
+  <div class="sheet-body" id="m-sub-body"></div>
+</div>
 
 <div id="m-toast" class="toast"></div>
 <script type="module" src="js/mobile.js"></script>

@@ -1,5 +1,6 @@
 // 家庭账本 · 手机 app（PWA）
-// 三个视图：记账（手动 + 拍照 OCR）、账单（按月）、我的（安装）。
+// 一级视图：记账（手动 + 拍照 OCR）、账单（按月查看）、总览（预算/使用/计划/库存等）。
+// 二级页面：账单详情、预算、使用情况、计划单、库存、基础数据。
 // 约束：所有 API 用相对路径，兼容 /finance/ 子路径反代。
 
 const $ = (s) => document.querySelector(s);
@@ -16,9 +17,18 @@ const state = {
   filter: 'all',
   listLoading: false,
   deferredPrompt: null,
+  sub: null,
+  subPushed: false,
+  overview: null,
+  plans: null,
+  stock: null,
 };
 
-const titles = { add: '记一笔', list: '账单', me: '我的' };
+const titles = { add: '记一笔', list: '账单', overview: '总览' };
+const subTitles = {
+  entry: '账单详情', budget: '预算', usage: '使用情况',
+  plans: '计划单', stock: '库存', base: '基础数据',
+};
 
 const esc = (v) =>
   String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -72,7 +82,34 @@ function shiftMonth(ym, delta) {
   return `${y}-${String(m).padStart(2, '0')}`;
 }
 
-// ---------- 视图切换 ----------
+function fmtTime(v) {
+  return String(v || '').replace('T', ' ').slice(0, 16) || '—';
+}
+
+function pct(r) {
+  return ((Number(r) || 0) * 100).toFixed(1) + '%';
+}
+
+function fmtQty(n) {
+  const v = Number(n || 0);
+  return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, '');
+}
+
+function sourceLabel(s) {
+  if (s === 'screenshot') return '账单截图识别';
+  if (s === 'manual') return '手动记账';
+  return s ? String(s) : '—';
+}
+
+function progressLine(label, rate, amount, cls) {
+  const w = Math.max(0, Math.min(100, (Number(rate) || 0) * 100)).toFixed(1);
+  return `<div class="d-progress">
+    <div><span>${esc(label)}</span><b>${esc(amount == null || amount === '' ? pct(rate) : amount)}</b></div>
+    <div class="d-bar"><i class="${cls || ''}" style="width:${w}%"></i></div>
+  </div>`;
+}
+
+// ---------- 一级视图切换 ----------
 function switchView(name) {
   state.view = name;
   $$('.view').forEach((v) => { v.hidden = v.id !== 'view-' + name; });
@@ -80,7 +117,282 @@ function switchView(name) {
   $('#page-title').textContent = titles[name] || '';
   window.scrollTo(0, 0);
   if (name === 'list') loadList();
-  if (name === 'me') updateNet();
+  if (name === 'overview') loadOverview();
+}
+
+// ---------- 二级页面 ----------
+function openSub(key, param) {
+  state.sub = key;
+  state.subPushed = true;
+  $('#m-sub-title').textContent = subTitles[key] || '详情';
+  $('#m-sub-body').innerHTML = '<div class="empty">加载中…</div>';
+  $('#m-sub-body').scrollTop = 0;
+  $('#m-sub').hidden = false;
+  history.pushState({ financeSub: key, param }, '');
+  loadSub(key, param);
+}
+
+function closeSub(fromPop) {
+  if (!state.sub) return;
+  state.sub = null;
+  $('#m-sub').hidden = true;
+  if (!fromPop && state.subPushed) {
+    state.subPushed = false;
+    history.back();
+  } else {
+    state.subPushed = false;
+  }
+}
+
+window.addEventListener('popstate', () => {
+  if (state.sub) closeSub(true);
+  state.subPushed = false;
+});
+
+async function loadSub(key, param) {
+  try {
+    if (key === 'entry') return await loadEntryDetail(param);
+
+    if (key === 'budget') {
+      const d = (state.overview && state.overview.period === state.month)
+        ? state.overview : await api(`api/dashboard?period=${state.month}`);
+      $('#m-sub-body').innerHTML = renderBudget(d);
+      return;
+    }
+
+    if (key === 'usage') {
+      const d = (state.overview && state.overview.period === state.month)
+        ? state.overview : await api(`api/dashboard?period=${state.month}`);
+      $('#m-sub-body').innerHTML = renderUsage(d);
+      return;
+    }
+
+    if (key === 'plans') {
+      const plans = state.plans || await api('api/plans');
+      $('#m-sub-body').innerHTML = renderPlans(plans);
+      return;
+    }
+
+    if (key === 'stock') {
+      const summary = state.stock || await api('api/stock/summary');
+      const items = await api('api/stock/items?status=in_stock');
+      $('#m-sub-body').innerHTML = renderStock(summary, items);
+      return;
+    }
+
+    if (key === 'base') {
+      const meta = state.meta || await api('api/meta');
+      $('#m-sub-body').innerHTML = renderBase(meta);
+      return;
+    }
+
+    $('#m-sub-body').innerHTML = '<div class="empty">未知页面</div>';
+  } catch (err) {
+    $('#m-sub-body').innerHTML = `<div class="empty">加载失败：${esc(err.message)}</div>`;
+  }
+}
+
+// ---------- 账单详情 ----------
+async function loadEntryDetail(id) {
+  const e = await api(`api/entries/${id}`);
+  let alloc = null;
+  if (e.allocation_id) {
+    try {
+      const period = String(e.occurred_at || '').slice(0, 7);
+      const list = await api(`api/allocations?period=${period}`);
+      alloc = (list || []).find((a) => a.id === e.allocation_id) || null;
+    } catch { /* 预算明细拿不到也不影响账单详情 */ }
+  }
+  $('#m-sub-body').innerHTML = renderEntryDetail(e, alloc);
+}
+
+function renderEntryDetail(e, alloc) {
+  const tags = e.tags || [];
+  const isIncome = e.type === 'income';
+  const sign = isIncome ? '+' : '−';
+  const tagHtml = tags.length
+    ? `<div class="d-tags">${tags.map((t) => `<span class="d-tag">${esc(t.name)}</span>`).join('')}</div>`
+    : '<span class="muted">—</span>';
+
+  const allocHtml = alloc
+    ? `<b>${esc(alloc.name)}</b>
+       <div class="muted">预算 ${esc(alloc.budget)} · 已花 ${esc(alloc.spent)} · 剩余 ${esc(alloc.remaining)}</div>
+       ${progressLine('预算使用', alloc.progress, pct(alloc.progress), 'expense')}`
+    : (e.allocation_name
+        ? `<b>${esc(e.allocation_name)}</b><div class="muted">预算明细暂不可用</div>`
+        : '<span class="muted">未关联预算</span>');
+
+  const shotHtml = e.screenshot_id
+    ? `<div class="d-card">
+         <h3>账单截图</h3>
+         <div class="d-shot"><img src="api/screenshots/${e.screenshot_id}/image" alt="账单截图"></div>
+         <p class="muted center"><a href="api/screenshots/${e.screenshot_id}/image" target="_blank" rel="noopener">查看原图</a></p>
+       </div>`
+    : '<div class="d-card"><h3>账单截图</h3><div class="empty">这笔流水没有上传截图</div></div>';
+
+  return `
+    <div class="d-card">
+      <div class="muted">${isIncome ? '收入' : '支出'} · ${esc(fmtTime(e.occurred_at))}</div>
+      <div class="d-big ${e.type}">${sign}${esc(e.amount)}</div>
+      <div class="d-row"><span>分类</span><div>${esc(e.category_name || '未分类')}</div></div>
+      <div class="d-row"><span>记账人</span><div>${esc(e.member_name || '—')}</div></div>
+      <div class="d-row"><span>备注</span><div>${esc(e.note || '—')}</div></div>
+      <div class="d-row"><span>来源</span><div>${esc(sourceLabel(e.source))}</div></div>
+      <div class="d-row"><span>记录于</span><div>${esc(fmtTime(e.created_at))}</div></div>
+    </div>
+    <div class="d-card"><h3>预算归属</h3>${allocHtml}</div>
+    <div class="d-card"><h3>标签</h3>${tagHtml}</div>
+    ${shotHtml}`;
+}
+
+// ---------- 预算 ----------
+function renderBudget(d) {
+  const allocs = d.allocations || [];
+  const list = allocs.length
+    ? `<div class="d-list">${allocs.map((a) => {
+        const cls = a.status === '超额' ? 'warn' : a.status === '已用完' ? 'done' : '';
+        return `<div class="d-item">
+          <div class="d-item-head"><b>${esc(a.name)}</b><span class="d-pill ${cls}">${esc(a.status || '进行中')}</span></div>
+          <div class="muted">${esc(a.period)} · ${a.batch === 'first' ? '月初' : '月中'} · ${esc(a.category_name || '未设分类')}</div>
+          ${progressLine('已花 ' + a.spent + ' · 剩余 ' + a.remaining, a.progress, pct(a.progress), a.status === '超额' ? 'warn' : 'expense')}
+        </div>`;
+      }).join('')}</div>`
+    : '<div class="empty">本期还没有预分配预算</div>';
+
+  return `
+    <div class="d-hero">
+      <div class="d-stat"><span>本期收入</span><b class="income">${esc(d.income)}</b></div>
+      <div class="d-stat"><span>本期支出</span><b class="expense">${esc(d.expense)}</b></div>
+      <div class="d-stat"><span>已分配</span><b>${esc(d.allocated)}</b></div>
+      <div class="d-stat"><span>预算剩余</span><b>${esc(d.remaining)}</b></div>
+    </div>
+    <div class="d-card">
+      <h3>资金预分配 · ${esc(d.period)}</h3>
+      ${progressLine('已预先分配', d.allocation_rate, d.allocated + ' · ' + pct(d.allocation_rate))}
+      ${progressLine('预算已使用', d.usage_rate, d.used + ' · ' + pct(d.usage_rate), d.usage_rate > 1 ? 'warn' : 'expense')}
+      <div class="muted">未分配收入 ${esc(d.unallocated)}</div>
+    </div>
+    <div class="d-card"><h3>预算明细</h3>${list}</div>`;
+}
+
+// ---------- 使用情况 ----------
+function renderUsage(d) {
+  const rows = d.category_breakdown || [];
+  const max = Math.max(...rows.map((r) => r.total_cents), 1);
+  const breakdown = rows.length
+    ? `<div class="d-list">${rows.map((r) => `<div class="d-item">
+        <div class="d-item-head"><b>${esc(r.label)}</b><span class="muted">${esc(r.total)} · ${r.count} 笔</span></div>
+        ${progressLine('', r.total_cents / max, '', 'expense')}
+      </div>`).join('')}</div>`
+    : '<div class="empty">本期还没有支出记录</div>';
+
+  return `
+    <div class="d-hero">
+      <div class="d-stat"><span>收入</span><b class="income">${esc(d.income)}</b></div>
+      <div class="d-stat"><span>支出</span><b class="expense">${esc(d.expense)}</b></div>
+      <div class="d-stat"><span>结余</span><b>${esc(d.balance)}</b></div>
+      <div class="d-stat"><span>账单笔数</span><b>${d.entry_count || 0}</b></div>
+    </div>
+    <div class="d-card">
+      <h3>预算执行 · ${esc(d.period)}</h3>
+      ${progressLine('分配率', d.allocation_rate, d.allocated + ' / ' + d.income + ' · ' + pct(d.allocation_rate))}
+      ${progressLine('使用率', d.usage_rate, d.used + ' / ' + d.allocated + ' · ' + pct(d.usage_rate), d.usage_rate > 1 ? 'warn' : 'expense')}
+      <div class="muted">预算剩余 ${esc(d.remaining)} · 未分类流水 ${d.uncategorized_count || 0} 笔</div>
+    </div>
+    <div class="d-card"><h3>分类支出</h3>${breakdown}</div>`;
+}
+
+// ---------- 计划单 ----------
+function renderPlans(plans) {
+  const active = plans.filter((p) => p.status === 'active').length;
+  const done = plans.length - active;
+  const list = plans.length
+    ? `<div class="d-list">${plans.map((p) => {
+        const finished = p.status === 'completed';
+        const allocs = p.allocations || [];
+        return `<div class="d-item">
+          <div class="d-item-head"><b>${esc(p.name)}</b><span class="d-pill ${finished ? 'done' : ''}">${finished ? '已完成' : '进行中'}</span></div>
+          <div class="muted">${esc(p.period || '')} · 预算 ${esc(p.budget)} · 已花 ${esc(p.spent)} · 剩余 ${esc(p.remaining)}</div>
+          ${allocs.length
+            ? `<div class="d-meta">${allocs.map((a) => `<span>${esc(a.name)} ${esc(a.budget)}</span>`).join('')}</div>`
+            : '<div class="muted">未关联预算</div>'}
+          ${progressLine('预算使用', p.progress, pct(p.progress), finished ? '' : 'expense')}
+          ${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}
+          ${finished && p.completed_at ? `<div class="muted">完成于 ${esc(fmtTime(p.completed_at))}</div>` : ''}
+        </div>`;
+      }).join('')}</div>`
+    : '<div class="empty">还没有计划单，可在电脑版新建并关联预算</div>';
+
+  return `
+    <div class="d-card">
+      <h3>计划单</h3>
+      <div class="muted">共 ${plans.length} 张 · 进行中 ${active} · 已完成 ${done}</div>
+      <div class="muted">流水挂到关联预算时，整张计划单会自动标记完成。</div>
+    </div>
+    ${list}`;
+}
+
+// ---------- 库存 ----------
+function renderStock(summary, items) {
+  const cats = summary.categories || [];
+  const alerts = summary.alerts || [];
+  const catList = cats.length
+    ? `<div class="d-list">${cats.map((c) => `<div class="d-item">
+        <div class="d-item-head"><b>${esc(c.name)}</b><span class="d-pill">${c.item_count} 项</span></div>
+        <div class="muted">数量 ${fmtQty(c.total_qty)} · 金额 ${esc(c.amount)}</div>
+        ${c.expired || c.expiring_soon ? `<div class="muted">已过期 ${c.expired} · 临期 ${c.expiring_soon}</div>` : ''}
+      </div>`).join('')}</div>`
+    : '<div class="empty">库存为空</div>';
+
+  const alertList = alerts.length
+    ? `<div class="d-list">${alerts.map((s) => `<div class="d-item">
+        <div class="d-item-head"><b>${esc(s.name)}</b><span class="d-pill danger">${s.expiry_status === 'expired' ? '已过期' : '临期'}</span></div>
+        <div class="muted">${esc(s.expiry_date || '未设保质期')} · ${s.days_left == null ? '—' : '剩 ' + s.days_left + ' 天'}</div>
+      </div>`).join('')}</div>`
+    : '<div class="empty">暂无临期或过期物品</div>';
+
+  const itemList = items.length
+    ? `<div class="d-list">${items.map((s) => `<div class="d-item">
+        <div class="d-item-head"><b>${esc(s.name)}</b><span class="d-pill ${s.expiry_status === 'expired' ? 'danger' : s.expiry_status === 'soon' ? 'warn' : ''}">${s.expiry_status === 'expired' ? '已过期' : s.expiry_status === 'soon' ? '临期' : '在库'}</span></div>
+        <div class="muted">${esc(s.category_name)} · ${fmtQty(s.qty)}${esc(s.unit || '')} · ${esc(s.amount)}</div>
+        <div class="muted">${esc(s.expiry_date || '未设保质期')}${s.days_left == null ? '' : ' · 剩 ' + s.days_left + ' 天'}${s.auto_created ? ' · 账单自动入库' : ' · 手工录入'}</div>
+      </div>`).join('')}</div>`
+    : '<div class="empty">没有在库物品</div>';
+
+  return `
+    <div class="d-hero">
+      <div class="d-stat"><span>在库种类</span><b>${summary.total_items || 0}</b></div>
+      <div class="d-stat"><span>库存金额</span><b>${esc(summary.total_amount)}</b></div>
+      <div class="d-stat"><span>临期</span><b class="expense">${summary.expiring_soon || 0}</b></div>
+      <div class="d-stat"><span>已过期</span><b class="expense">${summary.expired || 0}</b></div>
+    </div>
+    <div class="d-card"><h3>分类汇总</h3>${catList}</div>
+    <div class="d-card"><h3>临期提醒</h3>${alertList}</div>
+    <div class="d-card"><h3>在库物品</h3>${itemList}</div>`;
+}
+
+// ---------- 基础数据 ----------
+function renderBase(meta) {
+  const members = meta.members || [];
+  const tags = meta.tags || [];
+  const rules = meta.stock_rules || [];
+  const cats = meta.categories || [];
+  const roots = cats.filter((c) => !c.parent_id);
+  const chips = (arr, fn) => arr.length
+    ? `<div class="d-meta">${arr.map((x) => `<span>${fn(x)}</span>`).join('')}</div>`
+    : '<div class="muted">暂无</div>';
+
+  return `
+    <div class="d-hero">
+      <div class="d-stat"><span>成员</span><b>${members.length}</b></div>
+      <div class="d-stat"><span>一级分类</span><b>${roots.length}</b></div>
+      <div class="d-stat"><span>标签</span><b>${tags.length}</b></div>
+      <div class="d-stat"><span>库存品类</span><b>${rules.length}</b></div>
+    </div>
+    <div class="d-card"><h3>成员</h3>${chips(members, (m) => esc(m.name))}</div>
+    <div class="d-card"><h3>一级分类</h3>${chips(roots, (c) => esc(c.name))}</div>
+    <div class="d-card"><h3>标签</h3>${chips(tags, (t) => esc(t.name))}</div>
+    <div class="d-card"><h3>库存品类</h3>${chips(rules, (r) => esc(r.name) + ' · ' + r.shelf_days + ' 天')}</div>`;
 }
 
 // ---------- 记账表单 ----------
@@ -241,7 +553,7 @@ function dayKey(occurredAt) {
 function renderEntries(items) {
   const list = $('#m-list');
   if (!items.length) {
-    list.innerHTML = '<div class="empty">这个月还没有账单<br>去「记账」添加第一笔吧</div>';
+    list.innerHTML = '<div class="empty">这个月还没有账单</div>';
     return;
   }
   let html = '';
@@ -257,14 +569,14 @@ function renderEntries(items) {
     const name = e.note || e.category_name || (isIncome ? '收入' : '支出');
     const metaParts = [e.category_name, e.member_name, time].filter(Boolean);
     const ico = isIncome ? '↓' : '¥';
-    html += `<div class="entry">
-      <div class="entry-ico">${ico}</div>
-      <div class="entry-main">
-        <div class="entry-name">${esc(name)}</div>
-        <div class="entry-meta">${esc(metaParts.join(' · '))}</div>
-      </div>
-      <div class="entry-amt ${e.type}">${isIncome ? '+' : '−'}${esc(e.amount)}</div>
-    </div>`;
+    html += `<button class="entry" type="button" data-entry-id="${e.id}">
+      <span class="entry-ico">${ico}</span>
+      <span class="entry-main">
+        <span class="entry-name">${esc(name)}</span>
+        <span class="entry-meta">${esc(metaParts.join(' · '))}</span>
+      </span>
+      <span class="entry-amt ${e.type}">${isIncome ? '+' : '−'}${esc(e.amount)}</span>
+    </button>`;
   }
   list.innerHTML = html;
 }
@@ -290,7 +602,6 @@ async function loadList() {
     (state.filter === 'all' ? '' : `&type=${state.filter}`);
 
   try {
-    // 列表 + 收支汇总并行拉取，汇总始终按整月（不受筛选影响）
     const [r, exp, inc] = await Promise.all([
       api(q),
       api(`api/entries?from=${from}&to=${to}&type=expense&limit=1`),
@@ -321,12 +632,41 @@ function setFilter(filter) {
   loadList();
 }
 
-// ---------- 我的 / 安装 ----------
+// ---------- 总览 ----------
+async function loadOverview() {
+  const period = state.month || currentMonth();
+  ['ov-budget', 'ov-usage', 'ov-plans', 'ov-stock'].forEach((id) => {
+    const el = $('#' + id);
+    if (el) el.textContent = '加载中…';
+  });
+  try {
+    const [dash, plans, stock] = await Promise.all([
+      api(`api/dashboard?period=${period}`),
+      api('api/plans'),
+      api('api/stock/summary'),
+    ]);
+    state.overview = dash;
+    state.plans = plans || [];
+    state.stock = stock;
+    $('#ov-budget').textContent = `已分配 ${dash.allocated} · 已用 ${dash.used}`;
+    $('#ov-usage').textContent = `收入 ${dash.income} · 支出 ${dash.expense}`;
+    const active = state.plans.filter((p) => p.status === 'active').length;
+    $('#ov-plans').textContent = `${active} 进行中 · 共 ${state.plans.length} 张`;
+    $('#ov-stock').textContent = `${stock.total_items || 0} 项 · ${stock.expiring_soon || 0} 项临期`;
+  } catch (err) {
+    ['ov-budget', 'ov-usage', 'ov-plans', 'ov-stock'].forEach((id) => {
+      const el = $('#' + id);
+      if (el) el.textContent = '加载失败';
+    });
+    toast('总览加载失败：' + err.message, true);
+  }
+}
+
 function updateNet() {
   const el = $('#m-net');
   if (!el) return;
   if (navigator.onLine) el.textContent = '网络正常 · 数据实时同步';
-  else el.textContent = '当前离线 · 可查看已缓存账单';
+  else el.textContent = '当前离线 · 可查看已缓存数据';
 }
 
 function promptInstall() {
@@ -348,6 +688,7 @@ function showInstallButtons() {
 // ---------- 绑定 ----------
 function bind() {
   $$('.tab').forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
+  $$('[data-sub]').forEach((b) => b.addEventListener('click', () => openSub(b.dataset.sub)));
   $$('#m-type button').forEach((b) => b.addEventListener('click', () => setType(b.dataset.type)));
   $$('#m-filter button').forEach((b) => b.addEventListener('click', () => setFilter(b.dataset.filter)));
 
@@ -358,8 +699,13 @@ function bind() {
 
   $('#m-prev').addEventListener('click', () => setMonth(-1));
   $('#m-next').addEventListener('click', () => setMonth(1));
+  $('#m-list').addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-entry-id]');
+    if (btn) openSub('entry', Number(btn.dataset.entryId));
+  });
 
-  $('#m-reload').addEventListener('click', () => { loadList(); updateToday(); toast('已刷新'); });
+  $('#m-sub-back').addEventListener('click', () => closeSub(false));
+  $('#m-reload').addEventListener('click', () => { loadOverview(); loadList(); updateToday(); toast('已刷新'); });
   $('#m-install').addEventListener('click', promptInstall);
   $('#m-install2').addEventListener('click', promptInstall);
 
@@ -379,7 +725,6 @@ async function init() {
   state.month = currentMonth();
   updateNet();
 
-  // 注册 Service Worker（相对路径，兼容子路径）
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => { /* 离线能力不可用不影响主功能 */ });
   }

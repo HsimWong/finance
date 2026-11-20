@@ -10,6 +10,7 @@
 
 - 后端 **无框架 Go**（标准库 net/http，可用库不引 Web 框架）；前端**原生 HTML+CSS+JS，无构建**；数据库 **本地 SQLite**，截图 BLOB 入库；敏捷增量开发。
 - **改完 `src/frontend/js/*.js` 必须 `node --check`**（node v22 可用）。`go test` 抓不到 JS 语法错误。2026-11-18 因 `renderSettings()` 里 `const cats` 重复声明导致整个 app.js 不执行、全站白屏，用户误以为数据库丢了。排查用 Node 内置 WebSocket 连 Chrome `--remote-debugging-port` 走 CDP 收 `Runtime.exceptionThrown`；`--screenshot` 会把空页面拍下来误导判断。前端静态文件改动无需重编译/动库，强刷即生效。
+- **CSS 里必须有 `[hidden]{display:none !important}`**：`.view{display:grid}` 等作者样式会覆盖浏览器默认的 `[hidden]` 规则，导致 `hidden` 属性失效、多个视图同时显示。2026-11-20 移动端账单页上方一直出现拍照入口就是这个原因；切换视图的验证要查 computed display，不能只查 `el.hidden`。
 - **动数据库前必须先备份并验证**：`python scripts/db_admin.py backup --label before-xxx` → `verify` → 才改结构 → 启动后 `info` 核对行数。绝不删库重来。
 - **备份只保留最新一份**（用户 2026-11-18 明确），其余全删省空间。已在 `backupDB`（Go）与 `db_admin.py` 实现自动收敛（含孤立 -wal/-shm 清理、restore 保护来源）。变更过程中保留变更前快照，**任务收尾时**收敛到唯一一份。此规则覆盖旧的"startup 20 份/auto 48 份/daily 永久"约定。
 - **所有 URL 必须相对路径**（`api/x` 而非 `/api/x`）：系统挂在阿里云 `/finance/` 与 WorkBuddy 网关下，绝对路径会 404。后端跳转用自写 `redirectRel`，不用 `http.Redirect`。
@@ -27,7 +28,7 @@
 - **数据保护（ADR 0002）**：WAL 下禁止裸拷 db 当备份。`backup.go` 用 `VACUUM INTO` + `user_version` 版本化迁移，变更前强制备份、失败中止启动。schemaVersion 现为 **5**。
 - **访问口令**：`auth.go` 的 authGate，Cookie(`finance_access` 30 天)/`?token=`/`X-Access-Token` 三种，常量时间比较，同 IP 10 分钟失败 10 次 429。口令来自 `.env` 的 `ACCESS_TOKEN`，空则关闭（仅可信内网）。公网必须开启。`isPublicStatic` 仅放行 `/manifest.json`、`/sw.js`、`/icons/*` 供 PWA 安装（浏览器拉 manifest 不带页面 Cookie，不放行会 401 装不上）；API/页面仍严格鉴权。
 - **配置**：`config.go` 解析 `.env`（KEY=VALUE，export/引号），优先级 `-addr` > 环境变量 > .env > 默认。`ACCESS_TOKEN` 不入库，模板 `.env.example`。
-- **手机端 PWA（2026-11-19）**：`mobile.html`+`js/mobile.js`+`css/mobile.css` 是 app 式布局（底部导航：记账/账单/我的），支持手动记账、拍照 OCR、按月账单列表与汇总、添加到主屏幕；`manifest.json`+`sw.js`+`icons/` 为 PWA 外壳，SW 只缓存 app shell 不缓存 API。共用 Cookie，`isMobileUA` 在 `GET /` 302 到手机页，`/?desktop=1` 强制电脑版，iPad 不判移动。手机端需能看账单，不再只是拍照页。
+- **手机端 PWA（2026-11-19，11-20 改版）**：`mobile.html`+`js/mobile.js`+`css/mobile.css` 是 app 式布局，底部导航 **记账 / 账单 / 总览**。记账页支持手动+拍照 OCR；账单页只查看，每条账单点开二级页看截图、标签、预算归属；总览页聚合预算、使用情况、计划单、库存、基础数据，均可点进二级页。二级页用全屏 `.sheet` + `history.pushState/popstate`，Android 返回键可关。API 全部相对路径，`GET api/entries/{id}` 已含 tags/allocation_name/screenshot_id。`manifest.json`+`sw.js`+`icons/` 为 PWA 外壳，SW 只缓存 app shell 不缓存 API。共用 Cookie，`isMobileUA` 在 `GET /` 302 到手机页，`/?desktop=1` 强制电脑版，iPad 不判移动。
 - **一键启动**：`bash scripts/start.sh`（--local/--stop/--restart），编译→服务→隧道→打印地址；端口口令读 .env 不写死。
 
 ## 公网三处部署
