@@ -38,3 +38,12 @@ src/backend/$(pwd)/
 .chrome-stdout.txt
 .verify-*.mjs
 .verify-root/
+
+# Android 打包：工具链与下载包体积大不入库；源码与签名密钥保留，便于改地址后重新打包
+.apkbuild/sdk/
+.apkbuild/gradle-8.9/
+.apkbuild/*.zip
+.apkbuild/app/build/
+.apkbuild/.gradle/
+dist/*.apk
+

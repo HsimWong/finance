@@ -1,0 +1,4 @@
+// 顶层构建脚本：Android Gradle Plugin 版本与 Gradle 8.x / JDK 17 配套
+plugins {
+    id 'com.android.application' version '8.6.1' apply false
+}
