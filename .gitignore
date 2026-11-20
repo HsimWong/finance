@@ -36,5 +36,5 @@ src/backend/$(pwd)/
 .chrome-console*.txt
 .chrome-stderr.txt
 .chrome-stdout.txt
-.verify-pwa.mjs
+.verify-*.mjs
 .verify-root/

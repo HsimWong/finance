@@ -643,8 +643,8 @@ function bindEvents() {
       $('#entry-tag-box').innerHTML = tagChips();
       $('#upload-preview').innerHTML = '';
       clearRecognition();
-      await refreshBase();
-      await switchTab('dashboard');
+      // 留在当前记账页，刷新基础数据后可连续记下一笔，不再跳到仪表盘
+      await reloadCurrent();
     });
   });
   entryForm.addEventListener('reset', () => setTimeout(resetEntryDefaults, 0));
