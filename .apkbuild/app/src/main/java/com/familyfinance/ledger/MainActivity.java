@@ -1,13 +1,13 @@
 package com.familyfinance.ledger;
 
 import android.app.Activity;
-import android.app.ActivityManager;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -16,19 +16,29 @@ import android.widget.Toast;
 /**
  * 家庭记账 · 原生壳。
  *
- * 只做一件事：用一个全屏 WebView 打开阿里云固定入口 https://47.94.236.198/finance/。
- * 该地址由 Nginx 反代到本机服务，地址栏稳定不变，不依赖会随机变化的 cloudflared 隧道域名。
- * 证书是 Let's Encrypt 给该 IP 签发的，SAN 含 47.94.236.198，Android 系统信任。
+ * 直接加载阿里云固定入口的移动端页面 https://47.94.236.198/finance/mobile.html。
+ * 不走入口根路径：根路径要靠后端 UA 判断 + desktop cookie 才跳移动版，
+ * WebView 的 UA、残留 cookie 或登录后的相对回跳都可能让它落到桌面版。
+ * 手机专用客户端应锁定移动版，故把所有指向桌面首页的导航拉回 mobile.html。
  *
+ * 证书是 Let's Encrypt 给该 IP 签发的，SAN 含 47.94.236.198，Android 系统信任。
  * 为什么不用 PWA「添加到主屏幕」：小米/MIUI 上加的网页快捷方式经常没有图标、
  * 和普通书签混在一起。原生 APK 有真正的桌面图标与启动器条目。
  */
 public class MainActivity extends Activity {
-    private static final String START_URL = "https://47.94.236.198/finance/";
+    private static final String BASE_URL = "https://47.94.236.198/finance/";
+    private static final String MOBILE_URL = BASE_URL + "mobile.html";
     private static final int REQ_PICK_IMAGE = 1001;
 
     private WebView web;
     private ValueCallback<Uri[]> filePathCallback;
+
+    /** 是否指向桌面首页（入口根路径）——需要拉回移动版 */
+    private static boolean isDesktopLanding(String url) {
+        if (url == null) return false;
+        String clean = url.split("\\?")[0].split("#")[0];
+        return clean.equals(BASE_URL) || clean.equals("https://47.94.236.198/finance");
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -48,8 +58,35 @@ public class MainActivity extends Activity {
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         s.setUserAgentString(s.getUserAgentString() + " FamilyFinanceApp/1.0");
 
-        // 页面跳转留在 WebView 内，不调起系统浏览器
-        web.setWebViewClient(new WebViewClient());
+        // 页面跳转留在 WebView 内；桌面首页导航一律拉回移动版
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                if (isDesktopLanding(url)) {
+                    view.loadUrl(MOBILE_URL);
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                if (isDesktopLanding(url)) {
+                    view.loadUrl(MOBILE_URL);
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                // 服务端 302 由 WebView 内部跟随，不触发 shouldOverrideUrlLoading；
+                // 登录后 __auth 回跳到根路径时在这里兜底拉回移动版。
+                if (isDesktopLanding(url)) view.loadUrl(MOBILE_URL);
+            }
+        });
+
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> cb, FileChooserParams params) {
@@ -70,7 +107,7 @@ public class MainActivity extends Activity {
         });
 
         if (savedInstanceState == null) {
-            web.loadUrl(START_URL);
+            web.loadUrl(MOBILE_URL);
         } else {
             web.restoreState(savedInstanceState);
         }

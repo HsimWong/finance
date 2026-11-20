@@ -4,7 +4,10 @@
 
 ## 关键设计
 
-- 启动地址：`https://47.94.236.198/finance/`（阿里云固定入口，Nginx 剥 `/finance/` 前缀反代到后端）。
+- 启动地址：`https://47.94.236.198/finance/mobile.html`（阿里云固定入口 + 移动版页面）。
+  **不要加载根路径 `/finance/`**：根路径要靠后端 UA 判断 + 无 `finance_desktop=1` cookie 才跳移动版，
+  WebView 的 UA、残留 cookie、登录后的相对回跳都可能让它落到桌面版（1.0 的 bug）。
+  `MainActivity` 用 `isDesktopLanding()` 把所有指向桌面首页的导航（含登录后 302 回跳）拉回移动版。
   用固定 IP 而不是 cloudflared 隧道域名，隧道域名会随机变；证书是 Let's Encrypt 给该 IP 签发的，SAN 含该 IP，Android 信任。
 - 应用名「家庭记账」，桌面图标复用 PWA 的紫色账本 ¥ 图标（mdpi~xxxhdpi 五档）。
 - 权限仅 INTERNET + CAMERA；拍照记账走 `onShowFileChooser`，选择图片后交给页面 OCR。
@@ -20,7 +23,7 @@
 
 ## 重新打包步骤
 
-1. 改 `app/src/main/java/com/familyfinance/ledger/MainActivity.java` 里的 `START_URL`。
+1. 改 `app/src/main/java/com/familyfinance/ledger/MainActivity.java` 里的 `BASE_URL` / `MOBILE_URL`；同步递增 `app/build.gradle` 的 `versionCode`（覆盖安装必须递增）。
 2. 把 `.apkbuild/` 下的 `settings.gradle`、`build.gradle`、`gradle.properties`、`app/`、`family-finance.jks`
    同步到 `C:/Users/WangXin/WorkBuddy/finance-apk-build/`（AGP 要求纯 ASCII 路径）。
 3. PowerShell 构建（Bash 里 gradle.bat 读不到 JAVA_HOME）：
@@ -28,5 +31,5 @@
    `Set-Location` 到 `C:/Users/WangXin/WorkBuddy/finance-apk-build`，
    执行 `& "C:/Users/WangXin/WorkBuddy/财务管理/.apkbuild/gradle-8.9/bin/gradle.bat" assembleRelease --no-daemon`。
    注：PowerShell 会把 javac 的 deprecation 警告当成 NativeCommandError，只要输出含 `BUILD SUCCESSFUL` 就是成功。
-4. 产物 `finance-apk-build/app/build/outputs/apk/release/app-release.apk` 拷到 `dist/家庭记账-1.0.apk`。
+4. 产物 `finance-apk-build/app/build/outputs/apk/release/app-release.apk` 拷到 `dist/家庭记账-<版本>.apk`（当前 1.1）。
 5. 验签：`.apkbuild/sdk/build-tools/34.0.0/apksigner.bat verify --print-certs <apk>`（须在 PowerShell 里设 JAVA_HOME）。
