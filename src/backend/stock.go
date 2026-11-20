@@ -535,3 +535,112 @@ func handleStockMovements(w http.ResponseWriter, r *http.Request) {
 	}
 	writeOK(w, out)
 }
+
+// ---------- 消耗 / 损耗统计 ----------
+
+type stockConsumeKindStat struct {
+	Count int     `json:"count"`
+	Qty   float64 `json:"qty"`
+	Items int     `json:"items"`
+}
+
+type stockConsumeRank struct {
+	ItemID       int64   `json:"item_id"` // 仅物品排行有值；品类排行恒为 0
+	Key          string  `json:"key"`
+	Name         string  `json:"name"`
+	ConsumeQty   float64 `json:"consume_qty"`
+	ConsumeCount int     `json:"consume_count"`
+	WasteQty     float64 `json:"waste_qty"`
+	WasteCount   int     `json:"waste_count"`
+}
+
+type stockConsumeStat struct {
+	Period     string                          `json:"period"`
+	Consume    stockConsumeKindStat            `json:"consume"`
+	Waste      stockConsumeKindStat            `json:"waste"`
+	ByCategory []stockConsumeRank              `json:"by_category"`
+	ByItem     []stockConsumeRank              `json:"by_item"`
+}
+
+// handleStockConsumption 统计消耗/损耗：笔数、总量、涉及物品数，按品类与物品排行。
+// period=YYYY-MM 按月筛选（匹配 created_at 前缀）；不传或 all 表示全部。
+// 只读查询，不改任何数据或表结构。
+func handleStockConsumption(w http.ResponseWriter, r *http.Request) {
+	period := strings.TrimSpace(r.URL.Query().Get("period"))
+	where := "m.kind IN ('consume','waste')"
+	args := []any{}
+	if period != "" && period != "all" {
+		where += " AND substr(m.created_at, 1, 7) = ?"
+		args = append(args, period)
+	}
+
+	// 按类型汇总：笔数 / 总数量 / 涉及物品数
+	rows, err := db.Query(`SELECT m.kind, COUNT(*), COALESCE(SUM(m.qty), 0), COUNT(DISTINCT m.item_id)
+		FROM stock_movements m WHERE `+where+` GROUP BY m.kind`, args...)
+	if err != nil {
+		writeErr(w, 500, "统计失败: %v", err)
+		return
+	}
+	out := stockConsumeStat{Period: period, ByCategory: []stockConsumeRank{}, ByItem: []stockConsumeRank{}}
+	for rows.Next() {
+		var kind string
+		var count, items int
+		var qty float64
+		if err := rows.Scan(&kind, &count, &qty, &items); err != nil {
+			rows.Close()
+			writeErr(w, 500, "扫描统计失败: %v", err)
+			return
+		}
+		st := stockConsumeKindStat{Count: count, Qty: qty, Items: items}
+		if kind == "consume" { out.Consume = st } else if kind == "waste" { out.Waste = st }
+	}
+	rows.Close()
+
+	// 按品类排行（已删除物品的运动保留空品类，归到「已删除」）
+	catRows, err := db.Query(`SELECT 0, COALESCE(s.category_key, ''), COALESCE(s.category_name, '已删除物品'),
+		COALESCE(SUM(CASE WHEN m.kind='consume' THEN m.qty ELSE 0 END), 0),
+		SUM(CASE WHEN m.kind='consume' THEN 1 ELSE 0 END),
+		COALESCE(SUM(CASE WHEN m.kind='waste' THEN m.qty ELSE 0 END), 0),
+		SUM(CASE WHEN m.kind='waste' THEN 1 ELSE 0 END)
+		FROM stock_movements m LEFT JOIN stock_items s ON s.id = m.item_id
+		WHERE `+where+` GROUP BY s.category_key, s.category_name
+		ORDER BY (SUM(CASE WHEN m.kind='consume' THEN m.qty ELSE 0 END) + SUM(CASE WHEN m.kind='waste' THEN m.qty ELSE 0 END)) DESC`, args...)
+	if err != nil {
+		writeErr(w, 500, "品类统计失败: %v", err)
+		return
+	}
+	defer catRows.Close()
+	for catRows.Next() {
+		var c stockConsumeRank
+		if err := catRows.Scan(&c.ItemID, &c.Key, &c.Name, &c.ConsumeQty, &c.ConsumeCount, &c.WasteQty, &c.WasteCount); err != nil {
+			writeErr(w, 500, "扫描品类统计失败: %v", err)
+			return
+		}
+		out.ByCategory = append(out.ByCategory, c)
+	}
+	catRows.Close()
+
+	// 按物品排行
+	itemRows, err := db.Query(`SELECT m.item_id, '', COALESCE(s.name, '已删除物品'),
+		COALESCE(SUM(CASE WHEN m.kind='consume' THEN m.qty ELSE 0 END), 0),
+		SUM(CASE WHEN m.kind='consume' THEN 1 ELSE 0 END),
+		COALESCE(SUM(CASE WHEN m.kind='waste' THEN m.qty ELSE 0 END), 0),
+		SUM(CASE WHEN m.kind='waste' THEN 1 ELSE 0 END)
+		FROM stock_movements m LEFT JOIN stock_items s ON s.id = m.item_id
+		WHERE `+where+` GROUP BY m.item_id, s.name
+		ORDER BY (SUM(CASE WHEN m.kind='consume' THEN m.qty ELSE 0 END) + SUM(CASE WHEN m.kind='waste' THEN m.qty ELSE 0 END)) DESC`, args...)
+	if err != nil {
+		writeErr(w, 500, "物品统计失败: %v", err)
+		return
+	}
+	defer itemRows.Close()
+	for itemRows.Next() {
+		var c stockConsumeRank
+		if err := itemRows.Scan(&c.ItemID, &c.Key, &c.Name, &c.ConsumeQty, &c.ConsumeCount, &c.WasteQty, &c.WasteCount); err != nil {
+			writeErr(w, 500, "扫描物品统计失败: %v", err)
+			return
+		}
+		out.ByItem = append(out.ByItem, c)
+	}
+	writeOK(w, out)
+}

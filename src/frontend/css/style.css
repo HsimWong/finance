@@ -249,3 +249,14 @@ details summary { cursor: pointer; font-size: 13px; margin-top: 10px; }
     font-size: 12px; text-decoration: none; white-space: nowrap;
   }
 }
+
+/* 消耗 / 损耗统计 */
+.stock-consume-sum { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stock-consume-sum > div {
+  display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--border);
+  border-radius: 12px; background: var(--bg);
+}
+.stock-consume-sum span { color: var(--muted); font-size: 12px; }
+.stock-consume-sum b { font-size: 20px; }
+.stock-consume-sum small { color: var(--muted); font-size: 12px; }
+#stock-consume-stats h4 { margin: 6px 0; font-size: 14px; }

@@ -30,7 +30,7 @@ const state = {
 const titles = { add: '记一笔', list: '账单', overview: '总览' };
 const subTitles = {
   entry: '账单详情', 'entry-edit': '编辑账单', budget: '预算', usage: '使用情况',
-  plans: '计划单', stock: '库存', base: '基础数据',
+  plans: '计划单', stock: '库存', 'stock-item': '库存详情', base: '基础数据',
 };
 
 const esc = (v) =>
@@ -196,11 +196,16 @@ async function loadSub(key, param) {
     }
 
     if (key === 'stock') {
-      const summary = state.stock || await api('api/stock/summary');
-      const items = await api('api/stock/items?status=in_stock');
-      $('#m-sub-body').innerHTML = renderStock(summary, items);
+      const period = state.month || currentMonth();
+      const [summary, items, consumption] = await Promise.all([
+        state.stock || api('api/stock/summary'),
+        api('api/stock/items?status=in_stock'),
+        api(`api/stock/consumption?period=${period}`),
+      ]);
+      $('#m-sub-body').innerHTML = renderStock(summary, items, consumption, period);
       return;
     }
+    if (key === 'stock-item') return await loadStockItem(param);
 
     if (key === 'base') {
       const meta = state.meta || await api('api/meta');
@@ -484,7 +489,7 @@ function renderPlans(plans) {
 }
 
 // ---------- 库存 ----------
-function renderStock(summary, items) {
+function renderStock(summary, items, consumption, period) {
   const cats = summary.categories || [];
   const alerts = summary.alerts || [];
   const catList = cats.length
@@ -502,13 +507,15 @@ function renderStock(summary, items) {
       </div>`).join('')}</div>`
     : '<div class="empty">暂无临期或过期物品</div>';
 
+  // 在库物品可点开详情（含消耗/损耗操作）
   const itemList = items.length
-    ? `<div class="d-list">${items.map((s) => `<div class="d-item">
+    ? `<div class="d-list">${items.map((s) => `<button type="button" class="d-item d-item-btn" data-stock-id="${s.id}">
         <div class="d-item-head"><b>${esc(s.name)}</b><span class="d-pill ${s.expiry_status === 'expired' ? 'danger' : s.expiry_status === 'soon' ? 'warn' : ''}">${s.expiry_status === 'expired' ? '已过期' : s.expiry_status === 'soon' ? '临期' : '在库'}</span></div>
-        <div class="muted">${esc(s.category_name)} · ${fmtQty(s.qty)}${esc(s.unit || '')} · ${esc(s.amount)}</div>
-        <div class="muted">${esc(s.expiry_date || '未设保质期')}${s.days_left == null ? '' : ' · 剩 ' + s.days_left + ' 天'}${s.auto_created ? ' · 账单自动入库' : ' · 手工录入'}</div>
-      </div>`).join('')}</div>`
+        <div class="muted">${esc(s.category_name)} · ${fmtQty(s.qty)}${esc(s.unit || '')} · ${esc(s.amount)} · 点开详情 ›</div>
+      </button>`).join('')}</div>`
     : '<div class="empty">没有在库物品</div>';
+
+  const stat = renderStockConsumption(consumption, period);
 
   return `
     <div class="d-hero">
@@ -517,9 +524,89 @@ function renderStock(summary, items) {
       <div class="d-stat"><span>临期</span><b class="expense">${summary.expiring_soon || 0}</b></div>
       <div class="d-stat"><span>已过期</span><b class="expense">${summary.expired || 0}</b></div>
     </div>
+    ${stat}
     <div class="d-card"><h3>分类汇总</h3>${catList}</div>
     <div class="d-card"><h3>临期提醒</h3>${alertList}</div>
     <div class="d-card"><h3>在库物品</h3>${itemList}</div>`;
+}
+
+function renderStockConsumption(d, period) {
+  const c = (d && d.consume) || {}, w = (d && d.waste) || {};
+  const rankList = (list) => (list || []).length
+    ? `<div class="d-list">${list.slice(0, 8).map((r) => `<div class="d-item">
+        <div class="d-item-head"><b>${esc(r.name)}</b><span class="muted">消 ${fmtQty(r.consume_qty)} · 损 ${fmtQty(r.waste_qty)}</span></div>
+      </div>`).join('')}</div>`
+    : '';
+  return `<div class="d-card">
+    <h3>消耗 / 损耗统计 · ${esc(period || '全部')}</h3>
+    <div class="d-hero" style="grid-template-columns:1fr 1fr">
+      <div class="d-stat"><span>消耗</span><b class="expense">${fmtQty(c.qty || 0)}</b><small class="muted">${c.count || 0} 笔 · ${c.items || 0} 种</small></div>
+      <div class="d-stat"><span>损耗</span><b class="expense">${fmtQty(w.qty || 0)}</b><small class="muted">${w.count || 0} 笔 · ${w.items || 0} 种</small></div>
+    </div>
+    ${(d && d.by_item && d.by_item.length) ? `<h4 style="margin:2px 0 0;font-size:13px">按物品</h4>${rankList(d.by_item)}` : '<div class="empty">该月没有消耗 / 损耗记录</div>'}
+  </div>`;
+}
+
+// ---------- 库存项详情 + 消耗/损耗 ----------
+async function loadStockItem(id) {
+  const [all, movements] = await Promise.all([
+    api('api/stock/items'),
+    api(`api/stock/movements?item_id=${id}`),
+  ]);
+  const s = (all || []).find((x) => x.id === Number(id));
+  if (!s) { $('#m-sub-body').innerHTML = '<div class="empty">库存项不存在或已删除</div>'; return; }
+  $('#m-sub-body').innerHTML = renderStockItem(s, movements || []);
+}
+
+function renderStockItem(s, movements) {
+  const kindLabel = { in: '入库', consume: '消耗', waste: '损耗' };
+  const mvHtml = movements.length
+    ? `<div class="d-list">${movements.map((m) => `<div class="d-item">
+        <div class="d-item-head"><b>${esc(kindLabel[m.kind] || m.kind)}</b><span class="muted">${esc(fmtTime(m.created_at))}</span></div>
+        <div class="muted">数量 ${fmtQty(m.qty)} · ${esc(m.note || '—')}</div>
+      </div>`).join('')}</div>`
+    : '<div class="empty">暂无出入库记录</div>';
+
+  return `
+    <div class="d-card">
+      <div class="d-big">${esc(s.name)}</div>
+      <div class="d-row"><span>分类</span><div>${esc(s.category_name)}</div></div>
+      <div class="d-row"><span>在库数量</span><div>${fmtQty(s.qty)} ${esc(s.unit || '')}</div></div>
+      <div class="d-row"><span>金额</span><div>${esc(s.amount)}</div></div>
+      <div class="d-row"><span>保质期</span><div>${esc(s.expiry_date || '未设')}${s.days_left == null ? '' : ' · 剩 ' + s.days_left + ' 天'}</div></div>
+      <div class="d-row"><span>来源</span><div>${s.auto_created ? '账单自动入库' : '手工录入'}</div></div>
+    </div>
+    <div class="d-card">
+      <h3>操作</h3>
+      <div class="seg">
+        <button type="button" class="btn-consume" data-stock-id="${s.id}" data-kind="consume">消耗</button>
+        <button type="button" class="btn-waste" data-stock-id="${s.id}" data-kind="waste">损耗</button>
+      </div>
+      <p class="muted">留空表示全部用完。消耗=正常用量，损耗=报废丢弃。</p>
+    </div>
+    <div class="d-card"><h3>出入库记录</h3>${mvHtml}</div>`;
+}
+
+async function onStockMovement(kind, id) {
+  const label = kind === 'consume' ? '消耗' : '损耗';
+  const raw = prompt(`${label}数量（留空表示全部${label}）`, '');
+  if (raw === null) return;
+  const qty = Number(String(raw).trim());
+  const body = { note: label };
+  if (String(raw).trim() && qty > 0) body.qty = qty;
+  state.busy = true;
+  try {
+    await api(`api/stock/items/${id}/${kind}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    toast('已登记' + label);
+    state.stock = null; // 汇总缓存失效
+    loadStockItem(id);
+  } catch (err) {
+    toast(label + '失败：' + err.message, true);
+  } finally {
+    state.busy = false;
+  }
 }
 
 // ---------- 基础数据 ----------
@@ -869,6 +956,13 @@ function bind() {
     if (chip) { chip.classList.toggle('on'); return; }
     const saveBtn = ev.target.closest('#e-save');
     if (saveBtn) { onSaveEdit(); return; }
+    const stockBtn = ev.target.closest('[data-stock-id]');
+    if (stockBtn && !stockBtn.dataset.kind) { openSub('stock-item', Number(stockBtn.dataset.stockId)); return; }
+    const mvBtn = ev.target.closest('[data-kind]');
+    if (mvBtn && (mvBtn.dataset.kind === 'consume' || mvBtn.dataset.kind === 'waste')) {
+      onStockMovement(mvBtn.dataset.kind, Number(mvBtn.dataset.stockId));
+      return;
+    }
   });
   $('#m-reload').addEventListener('click', () => { loadOverview(); loadList(); updateToday(); toast('已刷新'); });
   $('#m-install').addEventListener('click', promptInstall);

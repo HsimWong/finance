@@ -62,6 +62,7 @@ func registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/stock/items/{id}/consume", handleConsumeStock)
 	mux.HandleFunc("POST /api/stock/items/{id}/waste", handleWasteStock)
 	mux.HandleFunc("GET /api/stock/movements", handleStockMovements)
+	mux.HandleFunc("GET /api/stock/consumption", handleStockConsumption)
 
 	mux.HandleFunc("GET /api/stock-categories", handleListStockCategories)
 	mux.HandleFunc("POST /api/stock-categories", handleCreateStockCategory)

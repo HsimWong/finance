@@ -282,3 +282,13 @@ main { padding: 16px 16px calc(var(--tab-h) + 28px + env(safe-area-inset-bottom)
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.bad { background: rgba(160,30,30,.95); }
+
+/* 库存详情：可点的库存项 + 消耗/损耗按钮 */
+.d-item-btn {
+  width: 100%; font: inherit; color: inherit; text-align: left; cursor: pointer;
+  background: var(--card);
+}
+.d-item-btn:active { background: var(--brand-weak); }
+.seg .btn-consume.on, .seg .btn-waste.on { color: var(--text); }
+.seg .btn-consume { color: var(--danger); font-weight: 600; }
+.seg .btn-waste { color: var(--warn); font-weight: 600; }

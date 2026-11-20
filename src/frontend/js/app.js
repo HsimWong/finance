@@ -612,6 +612,7 @@ function bindEvents() {
     $('#allocation-form input[name="period"]').value = state.period;
     await switchTab(state.tab);
   });
+  $('#stock-consume-period').addEventListener('change', () => guard(loadStock));
 
   // 记一笔
   const entryForm = $('#entry-form');
@@ -959,12 +960,37 @@ function clearRecognition() {
 const stockStatusLabel = { in_stock: '在库', used_up: '已用完', wasted: '已损耗' };
 
 async function loadStock() {
-  const [summary, movements] = await Promise.all([
+  const period = $('#stock-consume-period')?.value || '';
+  const [summary, movements, consumption] = await Promise.all([
     get('api/stock/summary'), get('api/stock/movements'),
+    get(`api/stock/consumption?period=${encodeURIComponent(period)}`),
   ]);
   renderStockSummary(summary);
   renderStockMovements(movements);
+  renderStockConsumption(consumption);
   await loadStockItems();
+}
+
+function renderStockConsumption(d) {
+  const el = $('#stock-consume-stats');
+  if (!el) return;
+  const c = d.consume || {}, w = d.waste || {};
+  const head = `<div class="stock-consume-sum">
+    <div><span>消耗</span><b>${c.count || 0} 笔</b><small>${c.qty || 0} 单位 · ${c.items || 0} 种物品</small></div>
+    <div><span>损耗</span><b>${w.count || 0} 笔</b><small>${w.qty || 0} 单位 · ${w.items || 0} 种物品</small></div>
+  </div>`;
+  const rows = (list, keyLabel) => (list || []).length
+    ? `<table><thead><tr><th>${keyLabel}</th><th>消耗</th><th>损耗</th></tr></thead><tbody>${list.map((r) => `<tr>
+        <td>${esc(r.name)}${r.item_id ? ` <span class="muted">#${r.item_id}</span>` : ''}</td>
+        <td>${r.consume_qty ? `${r.consume_qty} 单位（${r.consume_count} 笔）` : '—'}</td>
+        <td>${r.waste_qty ? `${r.waste_qty} 单位（${r.waste_count} 笔）` : '—'}</td>
+      </tr>`).join('')}</tbody></table>`
+    : '<div class="empty">该月份没有消耗 / 损耗记录</div>';
+  el.innerHTML = head +
+    `<div class="grid-2" style="margin-top:10px">
+      <div><h4>按品类</h4>${rows(d.by_category, '品类')}</div>
+      <div><h4>按物品</h4>${rows(d.by_item, '物品')}</div>
+    </div>`;
 }
 
 async function loadStockItems() {
@@ -1117,6 +1143,7 @@ async function openEditStockItem(id) {
 async function init() {
   $('#global-period').value = state.period;
   $('#allocation-form input[name="period"]').value = state.period;
+  $('#stock-consume-period').value = state.period;
   const now = localDateTime();
   $('#filter-form input[name="from"]').value = `${state.period}-01`;
   $('#report-form input[name="from"]').value = `${state.period}-01`;

@@ -40,6 +40,7 @@ src/backend/$(pwd)/
 .verify-root/
 .verify-edit-root/
 .chrome-edit-verify*/
+.chrome-stock-*/
 
 # Android 打包：工具链与下载包体积大不入库；源码与签名密钥保留，便于改地址后重新打包
 .apkbuild/sdk/
