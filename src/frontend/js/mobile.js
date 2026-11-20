@@ -18,15 +18,18 @@ const state = {
   listLoading: false,
   deferredPrompt: null,
   sub: null,
+  subParam: null,
   subPushed: false,
   overview: null,
   plans: null,
   stock: null,
+  edit: null,          // 正在编辑的流水（含回填所需字段）
+  allocations: null,   // 编辑页的预算下拉数据
 };
 
 const titles = { add: '记一笔', list: '账单', overview: '总览' };
 const subTitles = {
-  entry: '账单详情', budget: '预算', usage: '使用情况',
+  entry: '账单详情', 'entry-edit': '编辑账单', budget: '预算', usage: '使用情况',
   plans: '计划单', stock: '库存', base: '基础数据',
 };
 
@@ -123,8 +126,11 @@ function switchView(name) {
 // ---------- 二级页面 ----------
 function openSub(key, param) {
   state.sub = key;
+  state.subParam = param;
   state.subPushed = true;
   $('#m-sub-title').textContent = subTitles[key] || '详情';
+  // 「编辑」按钮只在账单详情显示；编辑态及其它二级页隐藏
+  $('#m-sub-edit').hidden = key !== 'entry';
   $('#m-sub-body').innerHTML = '<div class="empty">加载中…</div>';
   $('#m-sub-body').scrollTop = 0;
   $('#m-sub').hidden = false;
@@ -135,6 +141,7 @@ function openSub(key, param) {
 function closeSub(fromPop) {
   if (!state.sub) return;
   state.sub = null;
+  state.subParam = null;
   $('#m-sub').hidden = true;
   if (!fromPop && state.subPushed) {
     state.subPushed = false;
@@ -144,14 +151,29 @@ function closeSub(fromPop) {
   }
 }
 
-window.addEventListener('popstate', () => {
-  if (state.sub) closeSub(true);
+// 返回键逐层回退：编辑页 → 详情页 → 关闭。
+// history 里 entry-edit 是压在 entry 之上的一层，popstate 时按记录的目标重建对应页面。
+window.addEventListener('popstate', (ev) => {
+  const st = ev.state || {};
+  if (st.financeSub) {
+    const key = st.financeSub;
+    state.sub = key;
+    state.subParam = st.param;
+    state.subPushed = true;
+    $('#m-sub-title').textContent = subTitles[key] || '详情';
+    $('#m-sub-edit').hidden = key !== 'entry';
+    $('#m-sub').hidden = false;
+    loadSub(key, st.param);
+  } else if (state.sub) {
+    closeSub(true);
+  }
   state.subPushed = false;
 });
 
 async function loadSub(key, param) {
   try {
     if (key === 'entry') return await loadEntryDetail(param);
+    if (key === 'entry-edit') return await loadEntryEdit(param);
 
     if (key === 'budget') {
       const d = (state.overview && state.overview.period === state.month)
@@ -242,7 +264,136 @@ function renderEntryDetail(e, alloc) {
     </div>
     <div class="d-card"><h3>预算归属</h3>${allocHtml}</div>
     <div class="d-card"><h3>标签</h3>${tagHtml}</div>
-    ${shotHtml}`;
+    ${shotHtml}
+    <button class="save" id="e-open" type="button" data-entry-id="${e.id}">编辑这笔流水</button>`;
+}
+
+// ---------- 账单编辑 ----------
+async function loadEntryEdit(id) {
+  const [e, allocations] = await Promise.all([
+    api(`api/entries/${id}`),
+    api('api/allocations'),
+  ]);
+  state.edit = e;
+  state.allocations = allocations || [];
+  $('#m-sub-body').innerHTML = renderEntryEdit(e);
+}
+
+function renderEntryEdit(e) {
+  const meta = state.meta || {};
+  const type = e.type === 'income' ? 'income' : 'expense';
+  const cats = (meta.categories || []).filter((c) => (c.kind || 'expense') === type);
+  const selCat = (v) => (e.category_id === v ? ' selected' : '');
+  const opt = (c) => `<option value="${c.id}"${selCat(c.id)}>${esc(c.name)}</option>`;
+  const tops = cats.filter((c) => !c.parent_id);
+  let catHtml = '<option value="">未分类</option>';
+  for (const t of tops) {
+    const kids = cats.filter((c) => c.parent_id === t.id);
+    if (!kids.length) catHtml += opt(t);
+    else catHtml += `<optgroup label="${esc(t.name)}">${kids.map(opt).join('')}</optgroup>`;
+  }
+
+  const members = meta.members || [];
+  const memberHtml = '<option value="">未指定</option>' +
+    members.map((m) => `<option value="${m.id}"${e.member_id === m.id ? ' selected' : ''}>${esc(m.name)}</option>`).join('');
+
+  const allocs = state.allocations || [];
+  const allocHtml = '<option value="">不关联预算</option>' +
+    allocs.map((a) => `<option value="${a.id}"${e.allocation_id === a.id ? ' selected' : ''}>${esc(a.period)} · ${esc(a.name)}</option>`).join('');
+
+  const selectedTagIds = new Set((e.tags || []).map((t) => t.id));
+  const tags = meta.tags || [];
+  const tagHtml = tags.length
+    ? tags.map((t) => `<button type="button" class="tag-chip${selectedTagIds.has(t.id) ? ' on' : ''}" data-tag-id="${t.id}">${esc(t.name)}</button>`).join('')
+    : '<span class="tag-empty">暂无可选标签</span>';
+
+  const localTime = String(e.occurred_at || '').replace('T', ' ').slice(0, 16);
+
+  return `
+    <div class="form edit-form" id="e-form" data-entry-id="${e.id}" data-source="${esc(e.source || 'manual')}" data-shot-id="${e.screenshot_id || ''}">
+      <div class="seg" id="e-type">
+        <button type="button" data-type="expense" class="${type === 'expense' ? 'on' : ''}">支出</button>
+        <button type="button" data-type="income" class="${type === 'income' ? 'on' : ''}">收入</button>
+      </div>
+      <label class="field amount">
+        <span>金额</span>
+        <div class="amount-box"><em>¥</em><input id="e-amount" type="number" inputmode="decimal" step="0.01" min="0" value="${esc(e.amount)}"></div>
+      </label>
+      <label class="field"><span>分类</span><select id="e-category">${catHtml}</select></label>
+      <label class="field"><span>时间</span><input id="e-time" type="datetime-local" value="${esc(localTime)}"></label>
+      <label class="field"><span>备注</span><input id="e-note" type="text" placeholder="商户 / 说明" value="${esc(e.note || '')}"></label>
+      <label class="field"><span>记账人</span><select id="e-member">${memberHtml}</select></label>
+      <label class="field"><span>关联预算</span><select id="e-allocation">${allocHtml}</select></label>
+      <div class="field"><span>标签（可多选）</span><div class="tag-chips" id="e-tags">${tagHtml}</div></div>
+      <p class="hint">编辑不会改动自动入库的库存；截图保持原样。</p>
+      <button class="save" id="e-save" type="button">保存修改</button>
+    </div>`;
+}
+
+function setEditType(type) {
+  const t = type === 'income' ? 'income' : 'expense';
+  $$('#e-type button').forEach((b) => b.classList.toggle('on', b.dataset.type === t));
+  const e = state.edit;
+  const cats = ((state.meta || {}).categories || []).filter((c) => (c.kind || 'expense') === t);
+  const tops = cats.filter((c) => !c.parent_id);
+  let html = '<option value="">未分类</option>';
+  for (const c of tops) {
+    const kids = cats.filter((k) => k.parent_id === c.id);
+    if (!kids.length) html += `<option value="${c.id}">${esc(c.name)}</option>`;
+    else html += `<optgroup label="${esc(c.name)}">${kids.map((k) => `<option value="${k.id}">${esc(k.name)}</option>`).join('')}</optgroup>`;
+  }
+  $('#e-category').innerHTML = html;
+}
+
+async function onSaveEdit() {
+  if (state.busy) return;
+  const form = $('#e-form');
+  if (!form) return;
+  const id = Number(form.dataset.entryId);
+  const amount = Number($('#e-amount').value);
+  if (!(amount > 0)) { toast('请填写金额', true); $('#e-amount').focus(); return; }
+
+  const catVal = $('#e-category').value;
+  const memberVal = $('#e-member').value;
+  const allocVal = $('#e-allocation').value;
+  const tagIds = $$('#e-tags .tag-chip.on').map((b) => Number(b.dataset.tagId));
+  const body = {
+    type: $('#e-type button.on').dataset.type,
+    amount: amount.toFixed(2),
+    occurred_at: $('#e-time').value || nowLocal(),
+    member_id: memberVal ? Number(memberVal) : null,
+    category_id: catVal ? Number(catVal) : null,
+    allocation_id: allocVal ? Number(allocVal) : null,
+    // 编辑保留原截图与原来源，避免把截图关联清掉
+    screenshot_id: form.dataset.shotId ? Number(form.dataset.shotId) : null,
+    source: form.dataset.source || 'manual',
+    note: $('#e-note').value.trim(),
+    tag_ids: tagIds,
+    // 关键：编辑不传 sync_stock，后端不会碰库存（自动项与手工项都保持原样）
+  };
+
+  state.busy = true;
+  const btn = $('#e-save');
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  try {
+    await api(`api/entries/${id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    toast('账单已更新');
+    // 缓存失效，返回详情后重新拉取
+    state.allocations = null;
+    state.overview = null;
+    state.plans = null;
+    state.stock = null;
+    loadList();
+    closeSub(false); // 回到账单详情
+  } catch (err) {
+    toast('保存失败：' + err.message, true);
+  } finally {
+    state.busy = false;
+    if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = '保存修改'; }
+  }
 }
 
 // ---------- 预算 ----------
@@ -705,6 +856,20 @@ function bind() {
   });
 
   $('#m-sub-back').addEventListener('click', () => closeSub(false));
+  // 账单编辑：顶部按钮 + 详情底部按钮 + 表单内的类型/标签/保存（事件委托）
+  $('#m-sub-edit').addEventListener('click', () => {
+    if (state.sub === 'entry' && state.subParam != null) openSub('entry-edit', state.subParam);
+  });
+  $('#m-sub-body').addEventListener('click', (ev) => {
+    const openBtn = ev.target.closest('#e-open');
+    if (openBtn) { openSub('entry-edit', Number(openBtn.dataset.entryId)); return; }
+    const typeBtn = ev.target.closest('#e-type button');
+    if (typeBtn) { setEditType(typeBtn.dataset.type); return; }
+    const chip = ev.target.closest('.tag-chip');
+    if (chip) { chip.classList.toggle('on'); return; }
+    const saveBtn = ev.target.closest('#e-save');
+    if (saveBtn) { onSaveEdit(); return; }
+  });
   $('#m-reload').addEventListener('click', () => { loadOverview(); loadList(); updateToday(); toast('已刷新'); });
   $('#m-install').addEventListener('click', promptInstall);
   $('#m-install2').addEventListener('click', promptInstall);
